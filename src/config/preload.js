@@ -1,9 +1,13 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-
 contextBridge.exposeInMainWorld('Native', {
-  restart: () => ipcRenderer.send('cr'),
-  set: c => ipcRenderer.send('cs', c),
   get: () => ipcRenderer.sendSync('cg'),
-  open: () => ipcRenderer.send('of')
+  set: c => ipcRenderer.send('cs', c),
+  info: () => ipcRenderer.sendSync('ci'),
+  restart: () => ipcRenderer.send('cr'),
+  close: () => ipcRenderer.send('cc'),
+  minimize: () => ipcRenderer.send('cm'),
+  open: () => ipcRenderer.send('of'),
+  update: () => ipcRenderer.invoke('cu'),
+  restore: () => ipcRenderer.invoke('cx')
 });

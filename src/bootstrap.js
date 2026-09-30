@@ -6,10 +6,10 @@ if (!settings.get('enableHardwareAcceleration', true)) app.disableHardwareAccele
 process.env.PULSE_LATENCY_MSEC = process.env.PULSE_LATENCY_MSEC ?? 30;
 
 const buildInfo = require('./utils/buildInfo');
-app.setVersion(buildInfo.version); // More global because discord / electron
+app.setVersion(buildInfo.version);
 global.releaseChannel = buildInfo.releaseChannel;
 
-log('BuildInfo', buildInfo);
+log('BuildInfo', buildInfo.releaseChannel, buildInfo.version);
 
 const Constants = require('./Constants');
 app.setAppUserModelId(Constants.APP_ID);
@@ -26,40 +26,65 @@ const updater = require('./updater/updater');
 const moduleUpdater = require('./updater/moduleUpdater');
 const autoStart = require('./autoStart');
 
-let desktopCore;
+const env = k => process.env['ASAR_' + k] ?? process.env['OPENASAR_' + k];
+
+let desktopCore, mainWindow;
+
+// Bring the main window back no matter what state it is in (minimized, hidden to tray, behind other windows)
+const restoreMain = () => {
+  const w = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  if (!w) return splash.focusWindow();
+
+  try { desktopCore?.setMainWindowVisible?.(true); } catch { }
+  if (w.isMinimized()) w.restore();
+  if (!w.isVisible()) w.show();
+  w.focus();
+};
+
+const isHotkey = i => i.type === 'keyDown' && (process.platform === 'darwin' ? i.meta : i.control) && i.alt && !i.shift && i.key?.toLowerCase() === 'o';
+
 const startCore = () => {
   if (oaConfig.js || oaConfig.css) session.defaultSession.webRequest.onHeadersReceived((d, cb) => {
     delete d.responseHeaders['content-security-policy'];
+    delete d.responseHeaders['Content-Security-Policy'];
     cb(d);
   });
 
-  app.on('browser-window-created', (e, bw) => { // Main window injection
+  // Build the injected renderer script once (OpenAsar re-read + re-templated it on every dom-ready)
+  const injected = readFileSync(join(__dirname, 'mainWindow.js'), 'utf8').replace('__ASAR_CFG__', () => JSON.stringify({
+    version: asarVersion,
+    noTrack: oaConfig.noTrack !== false,
+    domOpt: oaConfig.domOptimizer !== false,
+    themeSync: oaConfig.themeSync !== false,
+    entry: oaConfig.settingsEntry !== false,
+    css: oaConfig.css ?? ''
+  }));
+
+  app.on('browser-window-created', (e, bw) => {
     bw.webContents.on('dom-ready', () => {
-      if (!bw.resizable) return; // Main window only
-      splash.pageReady(); // Override Core's pageReady with our own on dom-ready to show main window earlier
+      if (!bw.resizable) return; // Main window (and popouts) only - not our splash/config
+      if (!mainWindow || mainWindow.isDestroyed()) mainWindow = bw;
 
-      const [ channel = '', hash = '' ] = oaVersion.split('-'); // Split via -
+      splash.pageReady(); // Show main window as soon as the DOM is ready instead of waiting on Core
 
-      bw.webContents.executeJavaScript(readFileSync(join(__dirname, 'mainWindow.js'), 'utf8')
-        .replaceAll('<hash>', hash).replaceAll('<channel>', channel === 'nightly' ? '' : channel)
-        .replaceAll('<notrack>', oaConfig.noTrack !== false)
-        .replaceAll('<domopt>', oaConfig.domOptimizer !== false)
-        .replace('<css>', (oaConfig.css ?? '').replaceAll('\\', '\\\\').replaceAll('`', '\\`')));
+      bw.webContents.executeJavaScript(injected).catch(e => log('Inject', e));
+      if (oaConfig.js) bw.webContents.executeJavaScript(oaConfig.js).catch(e => log('Inject', 'Custom JS', e));
+    });
 
-      if (oaConfig.js) bw.webContents.executeJavaScript(oaConfig.js);
+    // Hotkey that always opens asar settings, even if Discord changes its settings UI again
+    if (oaConfig.hotkey !== false) bw.webContents.on('before-input-event', (ev, i) => {
+      if (!isHotkey(i)) return;
+      ev.preventDefault();
+      require('./config').open();
     });
   });
 
   desktopCore = require('discord_desktop_core');
 
-  const desktopTTI = new Proxy({}, {
-    get: (target, prop) => {
-      if (typeof target[prop] === 'undefined') {
-        target[prop] = () => { };
-      }
-      return target[prop];
-    }
+  const stub = () => new Proxy({}, {
+    get: (target, prop) => target[prop] ??= () => { }
   });
+  const desktopTTI = stub();
 
   desktopCore.startup({
     splashScreen: splash,
@@ -69,46 +94,36 @@ const startCore = () => {
     updater,
     autoStart,
 
-    // Just requires
     appSettings: require('./appSettings'),
     paths: require('./paths'),
 
     // Stubs
-    GPUSettings: {
-      replace: () => {}
-    },
+    GPUSettings: { replace: () => { } },
     crashReporterSetup: {
       isInitialized: () => true,
       getGlobalSentry: () => null,
       metadata: {}
     },
     logger: {
-      createLogger: () => ({
-        error: () => {},
-        info: () => {},
-        warn: () => {}
-      }),
-      initializeLogging: () => {},
-      ipcMainRendererLogger: () => {}
+      createLogger: () => ({ error: () => { }, info: () => { }, warn: () => { } }),
+      initializeLogging: () => { },
+      ipcMainRendererLogger: () => { }
     },
     analytics: new Proxy({}, {
       get: (target, prop) => {
         if (prop === 'getDesktopTTI') return () => desktopTTI;
-        if (typeof target[prop] === 'undefined') {
-          target[prop] = () => { };
-        }
-        return target[prop];
+        return target[prop] ??= () => { };
       }
     })
   });
 };
 
 const startUpdate = () => {
+  const noTrack = oaConfig.noTrack !== false;
   const urls = [
-    oaConfig.noTrack !== false ? 'https://*/api/*/science' : '',
-    oaConfig.noTrack !== false ? 'https://*/api/*/metrics' : '',
-    oaConfig.noTyping === true ? 'https://*/api/*/typing' : ''
-  ].filter(x => x);
+    ...(noTrack ? [ 'https://*/api/*/science', 'https://*/api/*/metrics', 'https://*/error-reporting-proxy/*', 'https://*.sentry.io/*' ] : []),
+    ...(oaConfig.noTyping === true ? [ 'https://*/api/*/typing' ] : [])
+  ];
 
   if (urls.length > 0) session.defaultSession.webRequest.onBeforeRequest({ urls }, (e, cb) => cb({ cancel: true }));
 
@@ -116,7 +131,7 @@ const startUpdate = () => {
   if (Constants.USE_NEW_UPDATER && updater.tryInitUpdater(buildInfo, Constants.NEW_UPDATE_ENDPOINT, Constants.USE_RUST_BSPATCH)) {
     const inst = updater.getUpdater();
 
-    inst.on('host-updated', () => autoStart.update(() => {}));
+    inst.on('host-updated', () => autoStart.update(() => { }));
     inst.on('unhandled-exception', fatal);
     inst.on('InconsistentInstallerState', fatal);
     inst.on('update-error', console.error);
@@ -127,7 +142,7 @@ const startUpdate = () => {
   }
 
   splash.events.once('APP_SHOULD_LAUNCH', () => {
-    if (!process.env.OPENASAR_NOSTART) startCore();
+    if (!env('NOSTART')) startCore();
   });
 
   let done;
@@ -137,17 +152,18 @@ const startUpdate = () => {
 
     desktopCore.setMainWindowVisible(!startMin);
 
-    setTimeout(() => { // Try to update our asar
-      const config = require('./config');
-      if (oaConfig.setup !== true) config.open();
-
-      if (oaConfig.autoupdate !== false) {
-        try {
-          require('./asarUpdate')();
-        } catch (e) {
-          log('AsarUpdate', e);
-        }
+    setTimeout(() => {
+      if (env('SMOKE')) { // CI: proves a real Discord client booted all the way through asar
+        console.log('ASAR_SMOKE_OK');
+        return app.exit(0);
       }
+
+      const config = require('./config');
+      if (oaConfig.asarSetup !== true) config.open(); // One-time welcome, persisted properly now
+
+      if (oaConfig.autoupdate !== false) require('./asarUpdate')().then(r => log('AsarUpdate', r), e => log('AsarUpdate', e?.message ?? e));
+
+      try { require('module').flushCompileCache?.(); } catch { }
     }, 3000);
   });
 
@@ -157,10 +173,16 @@ const startUpdate = () => {
 
 module.exports = () => {
   app.on('second-instance', (e, a) => {
-    desktopCore?.handleOpenUrl?.(a.includes('--url') && a[a.indexOf('--') + 1]); // Change url of main window if protocol is used (uses like "discord --url -- discord://example")
+    const url = a.includes('--url') && a[a.indexOf('--') + 1];
+    desktopCore?.handleOpenUrl?.(url);
+
+    // Launching Discord again (shortcut, taskbar, start menu) should bring the existing window back
+    if (!a.includes('--start-minimized')) restoreMain();
   });
 
   if (!app.requestSingleInstanceLock() && !(process.argv?.includes?.('--multi-instance') || oaConfig.multiInstance === true)) return app.quit();
 
   app.whenReady().then(startUpdate);
 };
+
+module.exports.restoreMain = restoreMain;

@@ -1,0 +1,16 @@
+{
+  "name": "asar",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A faster, self-contained Discord desktop app.asar (fork of OpenAsar)",
+  "license": "AGPL-3.0-only",
+  "repository": "github:eggyeg/asar",
+  "scripts": {
+    "build": "node build.js"
+  },
+  "devDependencies": {
+    "@electron/asar": "^4.3.1",
+    "esbuild": "^0.28.2",
+    "html-minifier-terser": "^7.2.0"
+  }
+}

@@ -14,7 +14,7 @@ exports.initSplash = (startMin) => {
   launchSplash(startMin);
 
 
-  if (process.env.OPENASAR_QUICKSTART || oaConfig.quickstart) setTimeout(() => {
+  if (process.env.ASAR_QUICKSTART || process.env.OPENASAR_QUICKSTART || oaConfig.quickstart) setTimeout(() => {
     destroySplash();
 
     launchMain();

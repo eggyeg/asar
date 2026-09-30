@@ -1,11 +1,18 @@
+const { join } = require('path');
+
+// UI is bundled inside the asar and loaded from disk: no CDN round-trip, works offline,
+// and can't be broken by a remote change (the OpenAsar UI was fetched from cdn.openasar.dev on every open).
 module.exports = (o, n) => {
   const w = new (require('electron').BrowserWindow)({
     frame: false,
     resizable: false,
     center: true,
-    backgroundColor: '#2f3136',
+    show: false,
+    backgroundColor: '#17171c',
     webPreferences: {
-      preload: require('path').join(__dirname, '..', n, 'preload.js')
+      preload: join(__dirname, '..', n, 'preload.js'),
+      spellcheck: false,
+      backgroundThrottling: false
     },
     ...o
   });
@@ -13,11 +20,18 @@ module.exports = (o, n) => {
   const c = w.webContents;
   c.once('dom-ready', () => {
     if (oaConfig.themeSync !== false) try {
-      c.insertCSS(JSON.parse(require('fs').readFileSync(require('path').join(require('../paths').getUserData(), 'userDataCache.json'), 'utf8')).openasarSplashCSS);
+      const cache = JSON.parse(require('fs').readFileSync(join(require('../paths').getUserData(), 'userDataCache.json'), 'utf8'));
+      const css = cache.asarSplashCSS ?? cache.openasarSplashCSS;
+      if (css) c.insertCSS(css);
     } catch { }
   });
 
-  w.loadURL('https://cdn.openasar.dev/' + n + '?v=' + oaVersion);
+  c.setWindowOpenHandler(({ url }) => { // External links open in the browser, never in-app
+    if (/^https:\/\//.test(url)) require('electron').shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
+  w.loadFile(join(__dirname, '..', n, 'index.html'));
 
   return w;
 };

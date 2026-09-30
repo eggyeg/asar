@@ -1,0 +1,107 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">
+<title>asar</title>
+<style>
+:root {
+  --bg: var(--asar-bg, var(--background-primary, #17171c));
+  --bg2: var(--asar-bg2, var(--background-secondary, #0f0f13));
+  --accent: var(--asar-accent, var(--brand-experiment, #8b7bff));
+  --text: var(--asar-text, var(--header-primary, #f2f2f5));
+  --muted: var(--asar-muted, var(--text-muted, #8a8a99));
+}
+* { box-sizing: border-box; margin: 0; user-select: none; cursor: default; }
+html, body { width: 100%; height: 100%; overflow: hidden; }
+body {
+  -webkit-app-region: drag;
+  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(120% 70% at 50% 0%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 70%),
+    var(--bg);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.logo { width: 84px; height: 84px; margin-bottom: 18px; }
+.logo path { fill: var(--accent); stroke: var(--accent); stroke-width: 3; stroke-linejoin: round; animation: lift 1.6s cubic-bezier(.5,0,.3,1) infinite; }
+.logo g:nth-child(1) path { animation-delay: .24s; }
+.logo g:nth-child(2) path { animation-delay: .12s; }
+@keyframes lift { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-5px); } }
+.word { font-size: 22px; font-weight: 700; letter-spacing: -.02em; margin-bottom: 22px; }
+.word span { color: var(--accent); }
+#text { color: var(--muted); font-size: 12.5px; height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
+.bar { width: 170px; height: 4px; border-radius: 4px; background: color-mix(in srgb, var(--text) 10%, transparent); margin-top: 12px; overflow: hidden; opacity: 0; transition: opacity .2s; }
+.bar.on { opacity: 1; }
+.bar i { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--accent); transition: width .25s ease; }
+.bar.indet i { width: 35%; animation: slide 1.1s ease-in-out infinite; }
+@keyframes slide { from { transform: translateX(-110%); } to { transform: translateX(320%); } }
+.actions { position: absolute; bottom: 14px; left: 0; right: 0; display: flex; justify-content: center; gap: 8px; opacity: 0; pointer-events: none; transition: opacity .25s; }
+.actions.on { opacity: 1; pointer-events: auto; }
+button {
+  -webkit-app-region: no-drag; cursor: pointer;
+  font: inherit; font-size: 12px; font-weight: 600;
+  color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent);
+  border: 0; border-radius: 6px; padding: 6px 14px;
+}
+button:hover { background: color-mix(in srgb, var(--text) 14%, transparent); }
+button.primary { background: var(--accent); color: #fff; }
+button.primary:hover { filter: brightness(1.1); }
+@media (prefers-reduced-motion: reduce) { .logo path, .bar.indet i { animation: none; } }
+</style>
+</head>
+<body>
+<svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><g transform="translate(0 18)"><path opacity=".35" d="M32 8 56 20 32 32 8 20Z"/></g><g transform="translate(0 9)"><path opacity=".65" d="M32 8 56 20 32 32 8 20Z"/></g><g><path d="M32 8 56 20 32 32 8 20Z"/></g></svg>
+<div class="word">asar<span>.</span></div>
+<div id="text">Starting…</div>
+<div class="bar indet on" id="bar"><i id="fill"></i></div>
+<div class="actions" id="actions">
+  <button id="skip" class="primary">Skip</button>
+  <button id="quit">Quit</button>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const text = $('text'), bar = $('bar'), fill = $('fill'), actions = $('actions');
+
+$('skip').onclick = () => Splash.skip();
+$('quit').onclick = () => Splash.quit();
+
+// Offer Skip if updates take a while, so a slow/broken update server never traps you on the splash
+let slow = setTimeout(() => actions.classList.add('on'), 6000);
+let countdown;
+
+const label = {
+  'checking-for-updates': 'Checking for updates',
+  'starting': 'Starting',
+  'manual': 'Manual update required'
+};
+
+Splash.onState(({ status, current, total, progress, seconds, details }) => {
+  clearInterval(countdown);
+  let msg = label[status] ?? status.replaceAll('-', ' ');
+  let determinate = false;
+
+  if (status === 'downloading' || status === 'installing') {
+    msg = `${status === 'downloading' ? 'Downloading' : 'Installing'} update ${current} of ${total}`;
+    determinate = true;
+    fill.style.width = Math.max(2, Math.min(100, progress || 0)) + '%';
+  }
+
+  if (status === 'fail') {
+    let s = seconds;
+    msg = `Update failed — retrying in ${s}s`;
+    countdown = setInterval(() => { s = Math.max(0, s - 1); text.textContent = `Update failed — retrying in ${s}s`; }, 1000);
+    actions.classList.add('on');
+  }
+
+  if (status === 'manual') actions.classList.add('on');
+  if (status === 'starting') { clearTimeout(slow); actions.classList.remove('on'); }
+
+  text.textContent = msg[0].toUpperCase() + msg.slice(1) + (determinate || status === 'fail' ? '' : '…');
+  bar.classList.toggle('indet', !determinate);
+  if (!determinate) fill.style.width = '';
+  bar.classList.toggle('on', status !== 'fail');
+});
+</script>
+</body>
+</html>

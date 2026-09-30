@@ -1,23 +1,75 @@
-# OpenAsar &nbsp;<sup><sub>/ˈoʊpən ʌsɑr/ &nbsp;*(o-pen as-are)*</sup></sub>
-![Nightly Status](https://github.com/GooseMod/OpenAsar/actions/workflows/nightly.yml/badge.svg) [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)]([https://choosealicense.com/licenses/agpl/l](https://choosealicense.com/licenses/agpl-3.0/))
+# asar
 
-**An open-source alternative of Discord desktop's `app.asar`**
+[![Nightly](https://github.com/eggyeg/asar/actions/workflows/nightly.yml/badge.svg)](https://github.com/eggyeg/asar/actions/workflows/nightly.yml) [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
-## Features
-- **:rocket: Startup Speed**: ~2x faster startup times (up to ~4x with experimental config)
-- **:chart_with_upwards_trend: Performance**: OpenAsar can make your client feel snappier (scrolling, switching channels, etc)
-- **:paintbrush: Splash Theming**: Easy theming for your splash which works with most themes for any client mod
-- **:electric_plug: Drop-in**: Replace one file and it's installed, that's it (same with uninstall)
-- **:gear: Configurable**: Adds many config options for Discord and OpenAsar enhancements (see config section)
-- **:cloud: Lightweight**: <1% of Discord's original size (9mb -> ~50kb)
-- **:shield: No Tracking**: Removes Discord's built-in tracking for crashes and errors in the asar (not app itself)
+A faster, self-contained Discord desktop `app.asar`. It's a fork of [OpenAsar](https://github.com/GooseMod/OpenAsar) (nightly 5a44615).
 
-### See [FAQ](faq.md) for more details
+**[Download the latest app.asar](https://github.com/eggyeg/asar/releases/download/nightly/app.asar)**
 
-<br>
+## What's different from OpenAsar
 
-## [Install Guide](https://github.com/GooseMod/OpenAsar/wiki/Install-Guide)
+**Fixes**
+- **Settings UI no longer breaks.** OpenAsar downloaded its splash and settings UI from `cdn.openasar.dev` every time. asar bundles both inside `app.asar` and loads them from disk. They work offline and a remote change can't break them.
+- **The settings entry survives Discord redesigns.** OpenAsar found Discord's "Advanced" item by hashed class names. When Discord's settings redesign removed them, it threw (`null.cloneNode`) and the entry disappeared. asar tries several strategies and never throws. **Ctrl + Alt + O** (Cmd + Option + O on macOS) always opens settings.
+- **Opening Discord again brings the window back.** Launching Discord while it's minimized or in the tray now restores and focuses the existing window. The settings window also un-minimizes when you reopen it.
+- **Settings save reliably.** OpenAsar dropped a settings save if `settings.json` had changed on disk, so its first-run window could reopen on every launch. asar merges its changes into the file on disk and writes atomically.
+- IPC handlers are registered once. OpenAsar added a new set every time the settings window opened.
+- asar's own update is written to a temp file and then swapped in, so a failed download can't corrupt `app.asar`.
+- `CalculateNativeWinOcclusion` is off by default. That Chromium feature is a known cause of blank or frozen Electron windows after restoring from minimized on Windows.
 
+**Optimizations**
+- The V8 compile cache (`module.enableCompileCache`, Electron 33+) caches compiled bytecode for Discord's core. Launches after the first one skip re-parsing it.
+- Splash and settings windows load with zero network requests.
+- The injected main-window script is built once per launch. OpenAsar re-read and re-templated it on every page load.
+- Theme sync runs every 60s instead of every 10s, plus when Discord is hidden. It reads both the old and the redesigned Discord color variables.
+- Chromium flags are merged and de-duplicated properly. Flag values containing `=` are handled, and so is `--js-flags`.
+- Presets: **Performance** (GPU raster, zero-copy, no background throttling), **Balanced**, **Battery**.
+- Every JS/HTML file is minified with esbuild and html-minifier.
+- Tracking block now also covers Sentry (`*.sentry.io`, `/error-reporting-proxy/`), both v7 and v8 clients.
 
-## Config
-You can configure OpenAsar by clicking the "OpenAsar..." version info in the bottom of your settings sidebar, which will open the config window.
+**UI**
+- New splash with a determinate progress bar, a retry countdown, and Skip/Quit buttons that appear if updates stall.
+- New settings window with General, Performance, Privacy, Theming, Advanced and About tabs.
+- A **Restore stock Discord** button that puts back `app.asar.backup` and keeps asar as `app.asar.asar-fork`.
+- Self-updates from this repo's [nightly release](https://github.com/eggyeg/asar/releases/tag/nightly) a few seconds after launch. Turn it off, or point it at another URL, in Settings → Advanced. asar never pulls from upstream OpenAsar, which would replace this build.
+
+Existing OpenAsar settings (CSS, JS, preset, toggles) are migrated automatically.
+
+## Install
+
+1. Fully quit Discord (right-click the tray icon, then Quit).
+2. Open Discord's `resources` folder:
+   - Windows: `%localappdata%\Discord\app-1.0.XXXX\resources` (use the newest `app-` folder)
+   - Linux: `/opt/discord/resources` or `/usr/share/discord/resources` (varies by distro)
+   - macOS: `/Applications/Discord.app/Contents/Resources`
+3. If there's no `app.asar.backup` yet, rename Discord's `app.asar` to `app.asar.backup`. It's already there if you used OpenAsar before.
+4. Copy the [new `app.asar`](https://github.com/eggyeg/asar/releases/download/nightly/app.asar) in and start Discord.
+
+Discord host updates keep asar automatically. The updater copies it into the new `app-` folder.
+
+## Uninstall
+
+In asar settings (**Ctrl + Alt + O**), go to Advanced → **Restore stock Discord**. Or by hand: delete `app.asar` and rename `app.asar.backup` back to `app.asar`.
+
+## Build
+
+```
+npm ci
+npm run build   # -> dist/app.asar
+```
+
+Every push to `main` is built by GitHub Actions and smoke-tested against the real Discord Linux client (stable and canary). If both pass, it's published as the `nightly` release.
+
+## Environment variables
+
+| Variable | Effect |
+| --- | --- |
+| `ASAR_QUICKSTART=1` | Skip the splash wait (same as the Quickstart toggle) |
+| `ASAR_NOSTART=1` | Run the updater but don't start Discord's core |
+| `ASAR_SMOKE=1` | Print `ASAR_SMOKE_OK` and exit once Discord has fully started (used by CI) |
+
+The older `OPENASAR_*` names still work.
+
+## License
+
+AGPL-3.0, same as OpenAsar. Credit to [GooseMod/OpenAsar](https://github.com/GooseMod/OpenAsar) and its contributors.
