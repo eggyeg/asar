@@ -1,23 +1,19 @@
 const fs = require('fs');
 
-class Settings { // Heavily based on original for compat, but simplified and tweaked
+class Settings {
   constructor(path) {
-    try {
-      this.store = JSON.parse(fs.readFileSync(path));
-    } catch {
-      this.store = {};
-    }
-
     this.path = path;
+    this.store = this.read() ?? {};
+    this.dirty = new Set();
     this.mod = this.getMod();
-
-    log('Settings', this.path, this.store);
   }
 
-  getMod() { // Get when file was last modified
-    try {
-      return fs.statSync(this.path).mtime.getTime();
-    } catch { }
+  read() {
+    try { return JSON.parse(fs.readFileSync(this.path, 'utf8')); } catch { }
+  }
+
+  getMod() {
+    try { return fs.statSync(this.path).mtimeMs; } catch { }
   }
 
   get(k, d) {
@@ -26,21 +22,38 @@ class Settings { // Heavily based on original for compat, but simplified and twe
 
   set(k, v) {
     this.store[k] = v;
+    this.dirty.add(k);
   }
 
   save() {
-    if (this.mod && this.mod !== this.getMod()) return; // File was last modified after Settings was made, so was externally edited therefore we don't save over
-
     try {
-      fs.writeFileSync(this.path, JSON.stringify(this.store, null, 2));
-      this.mod = this.getMod();
+      // OpenAsar silently dropped the save if the file changed on disk, which lost settings
+      // (eg: the first-run config window re-opening every launch). Merge our changes into the disk copy instead.
+      const m = this.getMod();
+      if (this.mod && m && m !== this.mod) {
+        const disk = this.read();
+        if (disk) {
+          for (const k of this.dirty) disk[k] = this.store[k];
+          this.store = disk;
+        }
+      }
 
-      log('Settings', 'Saved');
+      const data = JSON.stringify(this.store, null, 2);
+      const tmp = this.path + '.tmp';
+      try { // Atomic write so a crash mid-save can't corrupt settings.json
+        fs.writeFileSync(tmp, data);
+        fs.renameSync(tmp, this.path);
+      } catch {
+        fs.writeFileSync(this.path, data);
+      }
+
+      this.dirty.clear();
+      this.mod = this.getMod();
     } catch (e) {
       log('Settings', e);
     }
   }
 }
 
-let inst; // Instance of class
+let inst;
 exports.getSettings = () => inst = inst ?? new Settings(require('path').join(require('./paths').getUserData(), 'settings.json'));

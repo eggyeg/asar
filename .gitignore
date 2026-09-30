@@ -1,7 +1,5 @@
 node_modules
-src/package-lock.json
+dist/
 *.asar
 _*
-miniSrc/
-
-*.crswap # crostini tmp files
+*.crswap

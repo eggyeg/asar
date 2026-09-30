@@ -167,7 +167,7 @@ class Updater extends require('events').EventEmitter {
       (currentVersion !== this.committedHostVersion.join('.')) :
       (next !== resolve(process.execPath))
     ) && !options?.allowObsoleteHost) {
-      // Retain OpenAsar
+      // Retain asar
       const fs = require('original-fs');
 
       const cAsar = join(require.main.filename, '..');
@@ -177,7 +177,7 @@ class Updater extends require('events').EventEmitter {
         fs.copyFileSync(nAsar, nAsar + '.backup'); // Copy new app.asar to backup file (<new>/app.asar -> <new>/app.asar.backup)
         fs.copyFileSync(cAsar, nAsar); // Copy old app.asar to new app.asar (<old>/app.asar -> <new>/app.asar)
       } catch (e) {
-        log('Updater', 'Failed to retain OpenAsar', e);
+        log('Updater', 'Failed to retain asar', e);
       }
 
       if (process.platform === 'darwin') {

@@ -1,0 +1,329 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">
+<title>asar settings</title>
+<style>
+:root {
+  --bg: var(--asar-bg, var(--background-primary, #17171c));
+  --bg2: var(--asar-bg2, var(--background-secondary, #0f0f13));
+  --surface: var(--asar-surface, color-mix(in srgb, var(--text) 5%, var(--bg)));
+  --accent: var(--asar-accent, var(--brand-experiment, #8b7bff));
+  --text: var(--asar-text, var(--header-primary, #f2f2f5));
+  --muted: var(--asar-muted, var(--text-muted, #8a8a99));
+  --line: color-mix(in srgb, var(--text) 9%, transparent);
+  --danger: #f2555a;
+  --ok: #3ecf8e;
+}
+* { box-sizing: border-box; margin: 0; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  font: 13.5px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  color: var(--text); background: var(--bg);
+  display: grid; grid-template-rows: 44px 1fr; user-select: none;
+}
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+
+/* Title bar */
+.title { -webkit-app-region: drag; display: flex; align-items: center; gap: 10px; padding: 0 6px 0 14px; background: var(--bg2); border-bottom: 1px solid var(--line); }
+.title > svg { width: 20px; height: 20px; }
+.title > svg path, .about-hero svg path { fill: var(--accent); stroke: var(--accent); stroke-width: 3; stroke-linejoin: round; }
+.title b { font-weight: 700; letter-spacing: -.01em; }
+.chip { font-size: 11px; color: var(--muted); padding: 1px 7px; border-radius: 99px; background: color-mix(in srgb, var(--text) 7%, transparent); font-variant-numeric: tabular-nums; }
+.title .sp { flex: 1; }
+.wbtn { -webkit-app-region: no-drag; width: 32px; height: 28px; border: 0; background: none; border-radius: 6px; display: grid; place-items: center; color: var(--muted); }
+.wbtn:hover { background: color-mix(in srgb, var(--text) 9%, transparent); color: var(--text); }
+.wbtn.x:hover { background: var(--danger); color: #fff; }
+.wbtn svg { width: 12px; height: 12px; stroke: currentColor; stroke-width: 1.6; fill: none; }
+
+/* Layout */
+.main { display: grid; grid-template-columns: 150px 1fr; min-height: 0; }
+nav { padding: 10px 8px; border-right: 1px solid var(--line); background: var(--bg2); display: flex; flex-direction: column; gap: 2px; }
+nav button { text-align: left; border: 0; background: none; padding: 7px 10px; border-radius: 6px; color: var(--muted); font-weight: 500; }
+nav button:hover { background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
+nav button[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--text); }
+nav .foot { margin-top: auto; padding: 8px 10px; font-size: 11px; color: var(--muted); line-height: 1.5; }
+nav kbd { font: 600 10.5px ui-monospace, Menlo, Consolas, monospace; padding: 1px 4px; border-radius: 4px; background: color-mix(in srgb, var(--text) 9%, transparent); }
+
+.content { overflow-y: auto; padding: 18px 20px 24px; }
+.content::-webkit-scrollbar { width: 8px; }
+.content::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text) 14%, transparent); border-radius: 8px; }
+section { display: none; }
+section.on { display: block; }
+h2 { font-size: 17px; font-weight: 700; letter-spacing: -.01em; margin-bottom: 3px; }
+.lead { color: var(--muted); font-size: 12.5px; margin-bottom: 14px; }
+h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 700; margin: 18px 0 6px; }
+
+/* Rows */
+.row { display: flex; align-items: center; gap: 14px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+.row:last-child { border-bottom: 0; }
+.row .t { flex: 1; min-width: 0; }
+.row .t b { display: block; font-weight: 600; }
+.row .t span { display: block; color: var(--muted); font-size: 12px; margin-top: 1px; }
+
+/* Toggle */
+.sw { position: relative; width: 38px; height: 22px; flex: none; }
+.sw input { position: absolute; inset: 0; opacity: 0; cursor: pointer; margin: 0; z-index: 1; }
+.sw i { position: absolute; inset: 0; border-radius: 99px; background: color-mix(in srgb, var(--text) 18%, transparent); transition: background .15s; }
+.sw i::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; box-shadow: 0 1px 2px rgb(0 0 0 / .3); }
+.sw input:checked + i { background: var(--accent); }
+.sw input:checked + i::after { transform: translateX(16px); }
+.sw input:focus-visible + i { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Preset cards */
+.presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.preset { position: relative; border: 1px solid var(--line); border-radius: 10px; padding: 11px 11px 10px; background: var(--surface); cursor: pointer; }
+.preset input { position: absolute; opacity: 0; }
+.preset b { display: block; font-weight: 650; margin-bottom: 2px; }
+.preset span { color: var(--muted); font-size: 11.5px; line-height: 1.35; display: block; }
+.preset:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.preset:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Fields */
+.field { margin-top: 8px; }
+.field label { display: block; font-weight: 600; margin-bottom: 5px; }
+.field .hint { color: var(--muted); font-size: 12px; margin-top: 5px; }
+input[type=text], textarea {
+  width: 100%; background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; outline: none; user-select: text;
+}
+input[type=text]:focus, textarea:focus { border-color: var(--accent); }
+textarea { font: 12.5px/1.5 ui-monospace, "Cascadia Code", Menlo, Consolas, monospace; min-height: 150px; resize: vertical; tab-size: 2; }
+.inline { display: flex; gap: 8px; }
+.inline input { flex: 1; }
+
+.btn { border: 0; border-radius: 7px; padding: 7px 13px; font-weight: 600; background: color-mix(in srgb, var(--text) 9%, transparent); white-space: nowrap; }
+.btn:hover { background: color-mix(in srgb, var(--text) 14%, transparent); }
+.btn.primary { background: var(--accent); color: #fff; }
+.btn.primary:hover { filter: brightness(1.1); }
+.btn.danger { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
+.btn.danger:hover { background: var(--danger); color: #fff; }
+.btn:disabled { opacity: .45; cursor: not-allowed; filter: none; }
+.status { font-size: 12px; color: var(--muted); margin-top: 6px; min-height: 18px; }
+.status.ok { color: var(--ok); } .status.err { color: var(--danger); }
+.warn { font-size: 12px; color: #f0b232; margin-top: 5px; }
+
+.card { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 12px 14px; }
+.kv { display: grid; grid-template-columns: 110px 1fr; gap: 6px 10px; font-size: 12.5px; }
+.kv dt { color: var(--muted); } .kv dd { font-variant-numeric: tabular-nums; user-select: text; }
+.about-hero { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+.about-hero svg { width: 48px; height: 48px; } .about-hero svg path { fill: var(--accent); }
+.about-hero b { font-size: 20px; } .about-hero span { display: block; color: var(--muted); font-size: 12.5px; }
+.muted { color: var(--muted); font-size: 12px; line-height: 1.55; }
+
+/* Restart bar */
+.bar { position: fixed; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--bg2); border-top: 1px solid var(--line); transform: translateY(100%); transition: transform .2s ease; box-shadow: 0 -8px 24px rgb(0 0 0 / .25); }
+body:has(.bar.on) .content { padding-bottom: 72px; }
+.bar.on { transform: none; }
+.bar span { flex: 1; font-size: 12.5px; }
+.bar .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+</style>
+</head>
+<body>
+<header class="title">
+  <svg viewBox="0 0 64 64" aria-hidden="true"><g transform="translate(0 18)"><path opacity=".35" d="M32 8 56 20 32 32 8 20Z"/></g><g transform="translate(0 9)"><path opacity=".65" d="M32 8 56 20 32 32 8 20Z"/></g><g><path d="M32 8 56 20 32 32 8 20Z"/></g></svg>
+  <b>asar</b><span class="chip" id="ver">v1.0.0</span>
+  <span class="sp"></span>
+  <button class="wbtn" id="min" title="Minimize" aria-label="Minimize"><svg viewBox="0 0 12 12"><path d="M2 6h8"/></svg></button>
+  <button class="wbtn x" id="close" title="Close" aria-label="Close"><svg viewBox="0 0 12 12"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/></svg></button>
+</header>
+
+<div class="main">
+  <nav role="tablist" aria-label="Sections">
+    <button role="tab" data-tab="general" aria-selected="true">General</button>
+    <button role="tab" data-tab="performance">Performance</button>
+    <button role="tab" data-tab="privacy">Privacy</button>
+    <button role="tab" data-tab="theming">Theming</button>
+    <button role="tab" data-tab="advanced">Advanced</button>
+    <button role="tab" data-tab="about">About</button>
+    <div class="foot">Open anytime with<br><kbd id="hk">Ctrl + Alt + O</kbd></div>
+  </nav>
+
+  <div class="content">
+    <section id="general" class="on">
+      <h2>General</h2>
+      <p class="lead">How asar launches and where you can reach it.</p>
+      <div class="row"><div class="t"><b>Quickstart</b><span>Open Discord straight away and update in the background instead of waiting on the splash.</span></div><label class="sw"><input type="checkbox" data-k="quickstart" data-d="false"><i></i></label></div>
+      <div class="row"><div class="t"><b>Entry in Discord settings</b><span>Adds an “asar” item under Advanced in User Settings.</span></div><label class="sw"><input type="checkbox" data-k="settingsEntry" data-d="true"><i></i></label></div>
+      <div class="row"><div class="t"><b>Settings hotkey</b><span id="hkdesc">Ctrl + Alt + O opens this window from Discord, even if the settings entry can't be injected.</span></div><label class="sw"><input type="checkbox" data-k="hotkey" data-d="true"><i></i></label></div>
+      <div class="row"><div class="t"><b>Allow multiple instances</b><span>Run more than one Discord at once (eg: different accounts).</span></div><label class="sw"><input type="checkbox" data-k="multiInstance" data-d="false"><i></i></label></div>
+    </section>
+
+    <section id="performance">
+      <h2>Performance</h2>
+      <p class="lead">Chromium flag presets and startup optimizations.</p>
+      <h3>Preset</h3>
+      <div class="presets" role="radiogroup">
+        <label class="preset"><input type="radio" name="preset" value="perf"><b>Performance</b><span>GPU raster, zero-copy, no background throttling</span></label>
+        <label class="preset"><input type="radio" name="preset" value="balanced"><b>Balanced</b><span>Close to stock Discord flags</span></label>
+        <label class="preset"><input type="radio" name="preset" value="battery"><b>Battery</b><span>Low-power GPU, smaller memory footprint</span></label>
+      </div>
+      <h3>Optimizations</h3>
+      <div class="row"><div class="t"><b>Compile cache</b><span>Caches compiled JavaScript so Discord's core loads faster after the first launch.</span></div><label class="sw"><input type="checkbox" data-k="compileCache" data-d="true"><i></i></label></div>
+      <div class="row"><div class="t"><b>DOM optimizer</b><span>Defers removal of heavy activity elements to reduce stutter while scrolling.</span></div><label class="sw"><input type="checkbox" data-k="domOptimizer" data-d="true"><i></i></label></div>
+      <div class="field">
+        <label for="flags">Custom Chromium flags</label>
+        <input type="text" id="flags" data-k="customFlags" spellcheck="false" placeholder="--example-flag --another=value">
+        <div class="hint">Space separated. Added on top of the preset.</div>
+      </div>
+    </section>
+
+    <section id="privacy">
+      <h2>Privacy</h2>
+      <p class="lead">Network requests asar blocks before they leave your machine.</p>
+      <div class="row"><div class="t"><b>Block tracking</b><span>Blocks Discord analytics (science, metrics) and Sentry error reporting.</span></div><label class="sw"><input type="checkbox" data-k="noTrack" data-d="true"><i></i></label></div>
+      <div class="row"><div class="t"><b>Hide typing indicator</b><span>Others won't see “is typing…” when you type.</span></div><label class="sw"><input type="checkbox" data-k="noTyping" data-d="false"><i></i></label></div>
+    </section>
+
+    <section id="theming">
+      <h2>Theming</h2>
+      <p class="lead">Custom styles for Discord, and matching colors for asar's own windows.</p>
+      <div class="row"><div class="t"><b>Theme sync</b><span>Splash and this window follow your Discord theme colors.</span></div><label class="sw"><input type="checkbox" data-k="themeSync" data-d="true"><i></i></label></div>
+      <div class="field">
+        <label for="css">Custom CSS</label>
+        <textarea id="css" data-k="css" spellcheck="false" placeholder="/* Applied to Discord on every launch */&#10;.theme-dark { --background-primary: #111; }"></textarea>
+      </div>
+      <div class="field">
+        <label for="js">Custom JS</label>
+        <textarea id="js" data-k="js" spellcheck="false" placeholder="// Runs in Discord's window on load"></textarea>
+        <div class="warn">Only paste code you understand. Scripts here have full access to your Discord account.</div>
+      </div>
+    </section>
+
+    <section id="advanced">
+      <h2>Advanced</h2>
+      <p class="lead">Updates, raw settings and getting back to stock Discord.</p>
+      <h3>Updates</h3>
+      <div class="field">
+        <label for="url">Update URL</label>
+        <div class="inline">
+          <input type="text" id="url" data-k="updateUrl" spellcheck="false" placeholder="https://github.com/eggyeg/asar/releases/download/nightly/app.asar">
+          <button class="btn" id="check">Check now</button>
+        </div>
+        <div class="hint" id="uhint">Leave empty to use the official eggyeg/asar nightly build.</div>
+        <div class="status" id="ustatus"></div>
+      </div>
+      <div class="row"><div class="t"><b>Auto-update asar</b><span>Checks the update URL a few seconds after launch.</span></div><label class="sw"><input type="checkbox" data-k="autoupdate" data-d="true"><i></i></label></div>
+      <h3>Files</h3>
+      <div class="row"><div class="t"><b>settings.json</b><span>Discord and asar's raw settings file.</span></div><button class="btn" id="openfile">Open</button></div>
+      <h3>Restore</h3>
+      <div class="row"><div class="t"><b>Restore stock Discord</b><span id="rdesc">Puts back Discord's original app.asar and restarts. asar is kept as app.asar.asar-fork.</span></div><button class="btn danger" id="restore">Restore</button></div>
+      <div class="status" id="rstatus"></div>
+    </section>
+
+    <section id="about">
+      <h2>About</h2>
+      <p class="lead">&nbsp;</p>
+      <div class="about-hero">
+        <svg viewBox="0 0 64 64" aria-hidden="true"><g transform="translate(0 18)"><path opacity=".35" d="M32 8 56 20 32 32 8 20Z"/></g><g transform="translate(0 9)"><path opacity=".65" d="M32 8 56 20 32 32 8 20Z"/></g><g><path d="M32 8 56 20 32 32 8 20Z"/></g></svg>
+        <div><b>asar</b><span>A faster, self-contained Discord app.asar</span></div>
+      </div>
+      <div class="card"><dl class="kv" id="kv"></dl></div>
+      <p class="muted" style="margin-top:14px">Fork of OpenAsar by GooseMod. Licensed under AGPL-3.0, so the source ships with every build. Everything asar shows runs locally from inside app.asar. Nothing is loaded from a CDN.</p>
+    </section>
+  </div>
+</div>
+
+<div class="bar" id="bar">
+  <span class="dot"></span><span>Restart Discord to apply your changes.</span>
+  <button class="btn" id="later">Later</button>
+  <button class="btn primary" id="restart">Restart now</button>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const cfg = Native.get() || {};
+const info = Native.info?.() || {};
+
+if (info.version) $('ver').textContent = 'v' + info.version;
+if (info.updateUrl) $('url').placeholder = info.updateUrl;
+if (info.hotkey) {
+  $('hk').textContent = info.hotkey;
+  $('hkdesc').textContent = info.hotkey + ' opens this window from Discord, even if the settings entry can\'t be injected.';
+}
+
+// Tabs
+const tabs = [...document.querySelectorAll('nav [role=tab]')];
+const show = id => {
+  for (const t of tabs) t.setAttribute('aria-selected', t.dataset.tab === id);
+  for (const s of document.querySelectorAll('section')) s.classList.toggle('on', s.id === id);
+};
+for (const t of tabs) t.onclick = () => show(t.dataset.tab);
+
+// Save + restart prompt
+let pending = false;
+const save = () => {
+  Native.set(cfg);
+  if (!pending) { pending = true; $('bar').classList.add('on'); }
+};
+
+for (const el of document.querySelectorAll('input[type=checkbox][data-k]')) {
+  const k = el.dataset.k, d = el.dataset.d === 'true';
+  el.checked = cfg[k] ?? d;
+  el.onchange = () => { cfg[k] = el.checked; save(); };
+}
+
+let t;
+for (const el of document.querySelectorAll('input[type=text][data-k], textarea[data-k]')) {
+  const k = el.dataset.k;
+  el.value = cfg[k] ?? '';
+  el.oninput = () => { clearTimeout(t); t = setTimeout(() => { cfg[k] = el.value.trim() ? el.value : undefined; save(); }, 350); };
+}
+
+// Tab key inserts spaces in code editors
+for (const ta of document.querySelectorAll('textarea')) ta.onkeydown = e => {
+  if (e.key !== 'Tab') return;
+  e.preventDefault();
+  ta.setRangeText('  ', ta.selectionStart, ta.selectionEnd, 'end');
+  ta.oninput();
+};
+
+for (const r of document.querySelectorAll('input[name=preset]')) {
+  r.checked = r.value === (cfg.cmdPreset || 'perf');
+  r.onchange = () => { cfg.cmdPreset = r.value; save(); };
+}
+
+// Window buttons
+$('close').onclick = () => Native.close();
+$('min').onclick = () => Native.minimize();
+$('restart').onclick = () => Native.restart();
+$('later').onclick = () => $('bar').classList.remove('on');
+$('openfile').onclick = () => Native.open();
+
+const status = (el, msg, kind) => { el.textContent = msg; el.className = 'status' + (kind ? ' ' + kind : ''); };
+
+$('check').onclick = async () => {
+  const url = $('url').value.trim();
+  cfg.updateUrl = url || undefined;
+  Native.set(cfg);
+  $('check').disabled = true;
+  status($('ustatus'), 'Checking…');
+  const r = await Native.update();
+  $('check').disabled = false;
+  status($('ustatus'), r, /updated/i.test(r) ? 'ok' : /up to date/i.test(r) ? '' : 'err');
+  if (/restart/i.test(r)) $('bar').classList.add('on');
+};
+
+if (!info.backup) {
+  $('restore').disabled = true;
+  $('rdesc').textContent = 'No stock Discord backup (app.asar.backup) was found next to app.asar. Reinstalling Discord also restores it.';
+}
+let armed = false;
+$('restore').onclick = async () => {
+  if (!armed) { armed = true; $('restore').textContent = 'Click to confirm'; setTimeout(() => { armed = false; $('restore').textContent = 'Restore'; }, 4000); return; }
+  $('restore').disabled = true;
+  status($('rstatus'), 'Restoring…');
+  const r = await Native.restore();
+  status($('rstatus'), r === 'ok' ? 'Restored — restarting Discord…' : r, r === 'ok' ? 'ok' : 'err');
+};
+
+// About
+const rows = [ [ 'asar', info.version ], [ 'Discord', info.discord && (info.discord + (info.channel ? ' (' + info.channel + ')' : '')) ], [ 'Electron', info.electron ], [ 'Platform', info.platform ] ];
+$('kv').innerHTML = '';
+for (const [ k, v ] of rows) if (v) { const dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = k; dd.textContent = v; $('kv').append(dt, dd); }
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !e.target.matches('textarea, input')) Native.close(); });
+</script>
+</body>
+</html>
