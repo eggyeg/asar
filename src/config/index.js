@@ -42,6 +42,7 @@ ipcMain.on('ci', e => {
     platform: process.platform,
     backup: !!backupPath(),
     updateUrl: require('../asarUpdate').DEFAULT_URL,
+    lastUpdate: settings.get('asarLastUpdate'),
     hotkey: process.platform === 'darwin' ? 'Cmd + Option + O' : 'Ctrl + Alt + O'
   };
 });

@@ -6,6 +6,10 @@ const asar = require('@electron/asar');
 const SRC = path.join(__dirname, 'src'), OUT = path.join(__dirname, 'dist', 'app'), ASAR = path.join(__dirname, 'dist', 'app.asar');
 const RENDERER = new Set(['mainWindow.js', 'config/preload.js', 'splash/preload.js']);
 
+// Stamp the version with the git commit so every build is identifiable (shown in asar settings > About)
+let sha = '';
+try { sha = require('child_process').execSync('git rev-parse --short=7 HEAD', { cwd: __dirname, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch { }
+
 (async () => {
   fs.rmSync(path.join(__dirname, 'dist'), { recursive: true, force: true });
   const walk = d => fs.readdirSync(d, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]);
@@ -14,6 +18,7 @@ const RENDERER = new Set(['mainWindow.js', 'config/preload.js', 'splash/preload.
     const rel = path.relative(SRC, f).replaceAll('\\', '/'), out = path.join(OUT, rel);
     fs.mkdirSync(path.dirname(out), { recursive: true });
     let code = fs.readFileSync(f, 'utf8'); before += Buffer.byteLength(code);
+    if (rel === 'index.js' && sha) code = code.replace(/global\.asarVersion = '([0-9.]+)'/, (_, v) => `global.asarVersion = '${v}-${sha}'`);
     if (f.endsWith('.js')) {
       code = (await esbuild.transform(code, { minify: true, target: RENDERER.has(rel) ? 'chrome120' : 'node20', legalComments: 'none', charset: 'utf8' })).code;
     } else if (f.endsWith('.html')) {
@@ -24,5 +29,6 @@ const RENDERER = new Set(['mainWindow.js', 'config/preload.js', 'splash/preload.
   }
   fs.copyFileSync(path.join(__dirname, 'LICENSE'), path.join(OUT, 'LICENSE'));
   await asar.createPackage(OUT, ASAR);
+  console.log('version', sha || '(no git)');
   console.log(`source ${before} B -> minified ${after} B; app.asar ${fs.statSync(ASAR).size} B`);
 })().catch(e => { console.error(e); process.exit(1); });

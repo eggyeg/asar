@@ -4,7 +4,7 @@
 
 A faster, self-contained Discord desktop `app.asar`. It's a fork of [OpenAsar](https://github.com/GooseMod/OpenAsar) (nightly 5a44615).
 
-**[Download the latest app.asar](https://github.com/eggyeg/asar/releases/download/nightly/app.asar)**
+**[Download the latest app.asar](https://github.com/eggyeg/asar/raw/build/app.asar)**
 
 ## What's different from OpenAsar
 
@@ -31,7 +31,7 @@ A faster, self-contained Discord desktop `app.asar`. It's a fork of [OpenAsar](h
 - New splash with a determinate progress bar, a retry countdown, and Skip/Quit buttons that appear if updates stall.
 - New settings window with General, Performance, Privacy, Theming, Advanced and About tabs.
 - A **Restore stock Discord** button that puts back `app.asar.backup` and keeps asar as `app.asar.asar-fork`.
-- Self-updates from this repo's [nightly release](https://github.com/eggyeg/asar/releases/tag/nightly) a few seconds after launch. Turn it off, or point it at another URL, in Settings → Advanced. asar never pulls from upstream OpenAsar, which would replace this build.
+- Self-updates from this repo's [`build` branch](https://github.com/eggyeg/asar/tree/build) a few seconds after launch and shows a notification when it installs an update. Settings → Advanced shows when it last checked and the result. You can turn it off or point it at another URL there. asar never pulls from upstream OpenAsar, which would replace this build.
 
 Existing OpenAsar settings (CSS, JS, preset, toggles) are migrated automatically.
 
@@ -43,7 +43,7 @@ Existing OpenAsar settings (CSS, JS, preset, toggles) are migrated automatically
    - Linux: `/opt/discord/resources` or `/usr/share/discord/resources` (varies by distro)
    - macOS: `/Applications/Discord.app/Contents/Resources`
 3. If there's no `app.asar.backup` yet, rename Discord's `app.asar` to `app.asar.backup`. It's already there if you used OpenAsar before.
-4. Copy the [new `app.asar`](https://github.com/eggyeg/asar/releases/download/nightly/app.asar) in and start Discord.
+4. Copy the [new `app.asar`](https://github.com/eggyeg/asar/raw/build/app.asar) in and start Discord.
 
 Discord host updates keep asar automatically. The updater copies it into the new `app-` folder.
 
@@ -58,7 +58,9 @@ npm ci
 npm run build   # -> dist/app.asar
 ```
 
-Every push to `main` is built by GitHub Actions and smoke-tested against the real Discord Linux client (stable and canary). If both pass, it's published as the `nightly` release.
+Every push to `main` is built by GitHub Actions and smoke-tested against the real Discord Linux client (stable and canary). If both pass, the build is pushed to the [`build` branch](https://github.com/eggyeg/asar/tree/build) (where asar updates itself from) and the [`nightly` release](https://github.com/eggyeg/asar/releases/tag/nightly).
+
+To check which build you're on, open asar settings → About. The version ends with the commit it was built from, e.g. `1.0.0-abc1234`.
 
 ## Environment variables
 

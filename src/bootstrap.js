@@ -161,7 +161,13 @@ const startUpdate = () => {
       const config = require('./config');
       if (oaConfig.asarSetup !== true) config.open(); // One-time welcome, persisted properly now
 
-      if (oaConfig.autoupdate !== false) require('./asarUpdate')().then(r => log('AsarUpdate', r), e => log('AsarUpdate', e?.message ?? e));
+      if (oaConfig.autoupdate !== false) require('./asarUpdate')().then(r => {
+        log('AsarUpdate', r);
+        if (!/^Updated/.test(r)) return;
+
+        const { Notification } = require('electron');
+        if (Notification.isSupported()) new Notification({ title: 'asar updated', body: 'Restart Discord to use the new version.' }).show();
+      });
 
       try { require('module').flushCompileCache?.(); } catch { }
     }, 3000);

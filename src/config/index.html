@@ -102,6 +102,9 @@ textarea { font: 12.5px/1.5 ui-monospace, "Cascadia Code", Menlo, Consolas, mono
 .btn:disabled { opacity: .45; cursor: not-allowed; filter: none; }
 .status { font-size: 12px; color: var(--muted); margin-top: 6px; min-height: 18px; }
 .status.ok { color: var(--ok); } .status.err { color: var(--danger); }
+.last { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); padding: 9px 12px; margin-top: 4px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line); }
+.ldot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--muted); }
+.ldot.ok { background: var(--ok); } .ldot.err { background: var(--danger); } .ldot.new { background: var(--accent); }
 .warn { font-size: 12px; color: #f0b232; margin-top: 5px; }
 
 .card { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 12px 14px; }
@@ -201,10 +204,11 @@ body:has(.bar.on) .content { padding-bottom: 72px; }
           <input type="text" id="url" data-k="updateUrl" spellcheck="false" placeholder="https://github.com/eggyeg/asar/releases/download/nightly/app.asar">
           <button class="btn" id="check">Check now</button>
         </div>
-        <div class="hint" id="uhint">Leave empty to use the official eggyeg/asar nightly build.</div>
+        <div class="hint" id="uhint">Leave empty to use the latest eggyeg/asar build.</div>
         <div class="status" id="ustatus"></div>
       </div>
-      <div class="row"><div class="t"><b>Auto-update asar</b><span>Checks the update URL a few seconds after launch.</span></div><label class="sw"><input type="checkbox" data-k="autoupdate" data-d="true"><i></i></label></div>
+      <div class="row"><div class="t"><b>Auto-update asar</b><span>Checks for a new build a few seconds after Discord starts. You get a notification when one is installed.</span></div><label class="sw"><input type="checkbox" data-k="autoupdate" data-d="true"><i></i></label></div>
+      <div class="last" id="last"><span class="ldot" id="ldot"></span><span id="ltext">Not checked yet. Click Check now, or restart Discord.</span></div>
       <h3>Files</h3>
       <div class="row"><div class="t"><b>settings.json</b><span>Discord and asar's raw settings file.</span></div><button class="btn" id="openfile">Open</button></div>
       <h3>Restore</h3>
@@ -301,9 +305,25 @@ $('check').onclick = async () => {
   status($('ustatus'), 'Checking…');
   const r = await Native.update();
   $('check').disabled = false;
-  status($('ustatus'), r, /updated/i.test(r) ? 'ok' : /up to date/i.test(r) ? '' : 'err');
+  $('ustatus').textContent = '';
+  showLast({ time: Date.now(), result: r });
   if (/restart/i.test(r)) $('bar').classList.add('on');
 };
+
+const ago = t => {
+  const s = Math.round((Date.now() - t) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return Math.round(s / 60) + ' min ago';
+  if (s < 86400) return Math.round(s / 3600) + ' h ago';
+  return new Date(t).toLocaleDateString();
+};
+const showLast = l => {
+  if (!l) return;
+  const r = l.result || '';
+  $('ldot').className = 'ldot ' + (/up to date/i.test(r) ? 'ok' : /^updated|installed/i.test(r) ? 'new' : 'err');
+  $('ltext').textContent = 'Last check ' + ago(l.time) + ': ' + r;
+};
+showLast(info.lastUpdate);
 
 if (!info.backup) {
   $('restore').disabled = true;
