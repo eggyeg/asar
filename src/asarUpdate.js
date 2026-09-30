@@ -28,22 +28,28 @@ const download = (url, hops = 0) => new Promise((res, rej) => {
 
 const hash = b => createHash('sha256').update(b).digest('hex');
 
-// Updates asar from the URL set in settings, defaulting to eggyeg/asar's nightly release.
-// Never pulls from upstream OpenAsar, which would silently replace this build.
-const DEFAULT_URL = 'https://github.com/eggyeg/asar/releases/download/nightly/app.asar';
-module.exports = async (url = oaConfig.updateUrl || DEFAULT_URL) => {
-  if (!url) return 'No update URL set';
-  if (!/^https:\/\//.test(url)) return 'Update URL must be https://';
+// Updates asar from the URL set in settings, defaulting to the latest build on eggyeg/asar's `build` branch
+// (published by CI, no GitHub Release needed). Never pulls from upstream OpenAsar, which would silently replace this build.
+const DEFAULT_URL = 'https://raw.githubusercontent.com/eggyeg/asar/build/app.asar';
+
+const check = async url => {
+  if (!/^https:\/\//.test(url)) return 'Update URL must start with https://';
 
   log('AsarUpdate', 'Checking', url);
-  const buf = await download(url);
+  let buf;
+  try {
+    buf = await download(url);
+  } catch (e) {
+    if (/HTTP 404/.test(e.message)) return 'No build found at the update URL (HTTP 404)';
+    return 'Could not reach the update server: ' + e.message;
+  }
 
   if (buf.length < 1024 || buf.readUInt32LE(0) !== 4) return 'Downloaded file is not an asar archive';
 
   const target = join(__filename, '..');
   let cur;
   try { cur = fs.readFileSync(target); } catch { }
-  if (cur && hash(cur) === hash(buf)) return 'Already up to date';
+  if (cur && hash(cur) === hash(buf)) return global.asarPendingRestart ? 'Update installed - restart Discord to apply' : 'Already up to date';
 
   // Write to a temp file then swap in, so a failed/partial download can never leave a corrupt app.asar
   const tmp = target + '.new';
@@ -55,8 +61,26 @@ module.exports = async (url = oaConfig.updateUrl || DEFAULT_URL) => {
     fs.rmSync(tmp, { force: true });
   }
 
+  global.asarPendingRestart = true;
   log('AsarUpdate', 'Updated');
-  return 'Updated - restart to apply';
+  return 'Updated - restart Discord to apply';
+};
+
+// Every check is recorded so the settings window can show when it last ran and what happened
+module.exports = async (url = oaConfig.updateUrl || DEFAULT_URL) => {
+  let result;
+  try {
+    result = await check(url);
+  } catch (e) {
+    result = 'Update failed: ' + (e?.message ?? e);
+  }
+
+  try {
+    settings.set('asarLastUpdate', { time: Date.now(), result, url });
+    settings.save();
+  } catch { }
+
+  return result;
 };
 
 module.exports.DEFAULT_URL = DEFAULT_URL;
