@@ -90,6 +90,6 @@ exports.open = () => {
   win.once('ready-to-show', () => { win.show(); win.focus(); });
   win.on('closed', () => {
     win = null;
-    parent?.focus?.();
+    if (parent && !parent.isDestroyed()) parent.focus();
   });
 };
