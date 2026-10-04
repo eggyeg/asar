@@ -22,6 +22,10 @@ module.exports = () => {
   const flags = (oaConfig.customFlags ?? '').split(' ');
   for (const p of sel) if (presets[p]) flags.push(...presets[p].split(' '));
 
+  // Instant UI: Discord follows the system "reduce motion" setting by default, so this switches off its
+  // JS-driven animations (modals, popouts, channel switches) properly rather than just CSS ones
+  if (oaConfig.instantUI !== false) flags.push('--force-prefers-reduced-motion');
+
   if (process.platform === 'linux' && settings.get('openH264Enabled', true))
     flags.push('--enable-libopenh264', '--openh264-library-path=' + join(paths.getAssetCachePath(), 'openh264', 'libopenh264-2.5.1-linux64.7.so'));
 

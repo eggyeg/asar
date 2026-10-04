@@ -41,7 +41,40 @@ const restoreMain = () => {
   w.focus();
 };
 
-const isHotkey = i => i.type === 'keyDown' && (process.platform === 'darwin' ? i.meta : i.control) && i.alt && !i.shift && i.key?.toLowerCase() === 'o';
+// Physical key (KeyO), so it works on every keyboard layout (on Ukrainian/Russian layouts the O key types "щ")
+const isHotkey = i => i.type === 'keyDown' && (process.platform === 'darwin' ? i.meta : i.control) && i.alt && !i.shift && (i.code === 'KeyO' || i.key?.toLowerCase() === 'o');
+const hotkeyLabel = process.platform === 'darwin' ? 'Cmd + Option + O' : 'Ctrl + Alt + O';
+
+// Startup timing, shown in asar settings so you can see how fast Discord opens
+const recordLaunch = () => {
+  try {
+    const t = Math.round(process.uptime() * 100) / 100;
+    const prev = settings.get('asarStats', []);
+    const list = [ ...(Array.isArray(prev) ? prev : []), { t, at: Date.now(), v: asarVersion } ].slice(-10);
+    settings.set('asarStats', list);
+    settings.save();
+    log('Startup', `Discord window ready ${t}s after launch`);
+  } catch { }
+};
+
+const launchStats = () => {
+  const list = settings.get('asarStats', []);
+  if (!Array.isArray(list) || !list.length) return null;
+  const last = list[list.length - 1].t;
+  const recent = list.slice(-5);
+  return { last, avg: recent.length > 1 ? recent.reduce((a, x) => a + x.t, 0) / recent.length : null, n: recent.length };
+};
+
+// Raise Discord's processes above other apps so it stays responsive while games/browsers are busy (Windows only;
+// other platforms need root to raise priority)
+const boostPriority = () => {
+  if (process.platform !== 'win32' || oaConfig.priority === false) return;
+  const os = require('os');
+  for (const m of app.getAppMetrics()) {
+    if (![ 'Browser', 'Tab', 'GPU' ].includes(m.type)) continue;
+    try { os.setPriority(m.pid, os.constants.priority.PRIORITY_ABOVE_NORMAL); } catch { }
+  }
+};
 
 const startCore = () => {
   if (oaConfig.js || oaConfig.css) session.defaultSession.webRequest.onHeadersReceived((d, cb) => {
@@ -50,24 +83,38 @@ const startCore = () => {
     cb(d);
   });
 
-  // Build the injected renderer script once (OpenAsar re-read + re-templated it on every dom-ready)
-  const injected = readFileSync(join(__dirname, 'mainWindow.js'), 'utf8').replace('__ASAR_CFG__', () => JSON.stringify({
+  require('./config'); // Registers the IPC that opens asar settings (window itself only opens when you ask)
+
+  // Read the injected renderer script once (OpenAsar re-read + re-templated it on every dom-ready)
+  const injectedSrc = readFileSync(join(__dirname, 'mainWindow.js'), 'utf8');
+  const injected = () => injectedSrc.replace('__ASAR_CFG__', () => JSON.stringify({
     version: asarVersion,
     noTrack: oaConfig.noTrack !== false,
     domOpt: oaConfig.domOptimizer !== false,
     themeSync: oaConfig.themeSync !== false,
     entry: oaConfig.settingsEntry !== false,
+    noBlur: oaConfig.noBlur !== false,
+    instant: oaConfig.instantUI !== false,
+    hotkey: hotkeyLabel,
+    stats: launchStats(),
     css: oaConfig.css ?? ''
   }));
 
+  let firstReady = true;
   app.on('browser-window-created', (e, bw) => {
     bw.webContents.on('dom-ready', () => {
       if (!bw.resizable) return; // Main window (and popouts) only - not our splash/config
-      if (!mainWindow || mainWindow.isDestroyed()) mainWindow = bw;
+      if (!mainWindow || mainWindow.isDestroyed()) mainWindow = global.asarMainWindow = bw;
+
+      if (firstReady) {
+        firstReady = false;
+        recordLaunch();
+        setTimeout(boostPriority, 2000); // after GPU/renderer processes exist
+      }
 
       splash.pageReady(); // Show main window as soon as the DOM is ready instead of waiting on Core
 
-      bw.webContents.executeJavaScript(injected).catch(e => log('Inject', e));
+      bw.webContents.executeJavaScript(injected()).catch(e => log('Inject', e));
       if (oaConfig.js) bw.webContents.executeJavaScript(oaConfig.js).catch(e => log('Inject', 'Custom JS', e));
     });
 
@@ -157,9 +204,6 @@ const startUpdate = () => {
         console.log('ASAR_SMOKE_OK');
         return app.exit(0);
       }
-
-      const config = require('./config');
-      if (oaConfig.asarSetup !== true) config.open(); // One-time welcome, persisted properly now
 
       if (oaConfig.autoupdate !== false) require('./asarUpdate')().then(r => {
         log('AsarUpdate', r);

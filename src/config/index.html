@@ -17,6 +17,7 @@
   --ok: #3ecf8e;
 }
 * { box-sizing: border-box; margin: 0; }
+[hidden] { display: none !important; }
 html, body { height: 100%; overflow: hidden; }
 body {
   font: 13.5px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
@@ -105,6 +106,15 @@ textarea { font: 12.5px/1.5 ui-monospace, "Cascadia Code", Menlo, Consolas, mono
 .last { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); padding: 9px 12px; margin-top: 4px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line); }
 .ldot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--muted); }
 .ldot.ok { background: var(--ok); } .ldot.err { background: var(--danger); } .ldot.new { background: var(--accent); }
+.speed { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 12px 14px; margin-bottom: 6px; }
+.speed-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.speed-head span { color: var(--muted); font-size: 12px; }
+.bars { display: flex; align-items: flex-end; gap: 6px; height: 64px; }
+.bars .b { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 3px; height: 100%; min-width: 0; }
+.bars .b i { display: block; width: 100%; border-radius: 3px 3px 0 0; background: color-mix(in srgb, var(--accent) 45%, transparent); }
+.bars .b.cur i { background: var(--accent); }
+.bars .b span { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.bars .empty { color: var(--muted); font-size: 12px; align-self: center; }
 .warn { font-size: 12px; color: #f0b232; margin-top: 5px; }
 
 .card { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 12px 14px; }
@@ -148,14 +158,22 @@ body:has(.bar.on) .content { padding-bottom: 72px; }
       <h2>General</h2>
       <p class="lead">How asar launches and where you can reach it.</p>
       <div class="row"><div class="t"><b>Quickstart</b><span>Open Discord straight away and update in the background instead of waiting on the splash.</span></div><label class="sw"><input type="checkbox" data-k="quickstart" data-d="false"><i></i></label></div>
-      <div class="row"><div class="t"><b>Entry in Discord settings</b><span>Adds an “asar” item under Advanced in User Settings.</span></div><label class="sw"><input type="checkbox" data-k="settingsEntry" data-d="true"><i></i></label></div>
+      <div class="row"><div class="t"><b>Tab in Discord settings</b><span>Adds an “asar” tab to Discord's settings. Clicking it opens this window.</span></div><label class="sw"><input type="checkbox" data-k="settingsEntry" data-d="true"><i></i></label></div>
       <div class="row"><div class="t"><b>Settings hotkey</b><span id="hkdesc">Ctrl + Alt + O opens this window from Discord, even if the settings entry can't be injected.</span></div><label class="sw"><input type="checkbox" data-k="hotkey" data-d="true"><i></i></label></div>
       <div class="row"><div class="t"><b>Allow multiple instances</b><span>Run more than one Discord at once (eg: different accounts).</span></div><label class="sw"><input type="checkbox" data-k="multiInstance" data-d="false"><i></i></label></div>
     </section>
 
     <section id="performance">
       <h2>Performance</h2>
-      <p class="lead">Chromium flag presets and startup optimizations.</p>
+      <p class="lead">What makes Discord feel faster, and how fast it actually starts.</p>
+      <div class="speed" id="speed">
+        <div class="speed-head"><b>Startup time</b><span id="speedsum">Measured from launch until Discord's window is ready.</span></div>
+        <div class="bars" id="bars"><span class="empty">No launches recorded yet. Restart Discord to get your first number.</span></div>
+      </div>
+      <h3>Feel</h3>
+      <div class="row"><div class="t"><b>Instant UI</b><span>Turns off Discord's animations (modals, popouts, channel switches) so everything responds immediately.</span></div><label class="sw"><input type="checkbox" data-k="instantUI" data-d="true"><i></i></label></div>
+      <div class="row"><div class="t"><b>Turn off blur</b><span>Removes background blur, one of the most expensive effects for your GPU. Looks almost the same.</span></div><label class="sw"><input type="checkbox" data-k="noBlur" data-d="true"><i></i></label></div>
+      <div class="row" id="prow"><div class="t"><b>High priority</b><span>Windows gives Discord CPU time before other apps, so it stays smooth while games or browsers are busy.</span></div><label class="sw"><input type="checkbox" data-k="priority" data-d="true"><i></i></label></div>
       <h3>Preset</h3>
       <div class="presets" role="radiogroup">
         <label class="preset"><input type="radio" name="preset" value="perf"><b>Performance</b><span>GPU raster, zero-copy, no background throttling</span></label>
@@ -324,6 +342,28 @@ const showLast = l => {
   $('ltext').textContent = 'Last check ' + ago(l.time) + ': ' + r;
 };
 showLast(info.lastUpdate);
+
+// Startup chart
+const stats = Array.isArray(info.stats) ? info.stats.slice(-10) : [];
+if (stats.length) {
+  const max = Math.max(...stats.map(s => s.t)) || 1;
+  $('bars').innerHTML = '';
+  stats.forEach((s, i) => {
+    const b = document.createElement('div');
+    b.className = 'b' + (i === stats.length - 1 ? ' cur' : '');
+    b.title = new Date(s.at).toLocaleString() + (s.v ? ' · asar ' + s.v : '');
+    const bar = document.createElement('i');
+    bar.style.height = Math.max(6, (s.t / max) * 46) + 'px';
+    const lbl = document.createElement('span');
+    lbl.textContent = s.t.toFixed(1) + 's';
+    b.append(bar, lbl);
+    $('bars').append(b);
+  });
+  const recent = stats.slice(-5);
+  const avg = recent.reduce((a, s) => a + s.t, 0) / recent.length;
+  $('speedsum').textContent = 'Last launch ' + stats[stats.length - 1].t.toFixed(1) + ' s' + (recent.length > 1 ? ' · average ' + avg.toFixed(1) + ' s' : '');
+}
+if (info.platform && info.platform !== 'win32') $('prow').hidden = true;
 
 if (!info.backup) {
   $('restore').disabled = true;

@@ -43,6 +43,7 @@ ipcMain.on('ci', e => {
     backup: !!backupPath(),
     updateUrl: require('../asarUpdate').DEFAULT_URL,
     lastUpdate: settings.get('asarLastUpdate'),
+    stats: settings.get('asarStats', []),
     hotkey: process.platform === 'darwin' ? 'Cmd + Option + O' : 'Ctrl + Alt + O'
   };
 });
@@ -78,14 +79,17 @@ exports.open = () => {
     return win.focus();
   }
 
+  const parent = global.asarMainWindow && !global.asarMainWindow.isDestroyed() ? global.asarMainWindow : undefined;
   win = require('../utils/win')({
     width: 560,
     height: 680,
-    minimizable: true
+    minimizable: true,
+    parent // Stays on top of Discord and never pushes Discord behind other windows
   }, 'config');
 
-  win.once('ready-to-show', () => win.show());
-  win.on('closed', () => { win = null; });
-
-  if (oaConfig.asarSetup !== true) save({ ...oaConfig, setup: true, asarSetup: true });
+  win.once('ready-to-show', () => { win.show(); win.focus(); });
+  win.on('closed', () => {
+    win = null;
+    parent?.focus?.();
+  });
 };
