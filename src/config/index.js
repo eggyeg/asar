@@ -23,7 +23,13 @@ const backupPath = () => {
 
 // IPC is registered exactly once (OpenAsar re-registered every time the window opened, leaking handlers)
 ipcMain.on('DISCORD_UPDATED_QUOTES', (e, c) => {
-  if (c === 'o') exports.open();
+  if (c === 'o') return exports.open();
+
+  // Status report from the injected script (is the settings tab in place, and if not, why)
+  if (c && typeof c === 'object' && c.asarDiag) {
+    global.asarDiag = { ...c.asarDiag, at: new Date().toISOString(), discord: app.getVersion() };
+    try { require('fs').writeFileSync(join(require('../paths').getUserData(), 'asar-diagnostics.json'), JSON.stringify(global.asarDiag, null, 2)); } catch { }
+  }
 });
 
 ipcMain.on('cg', e => { e.returnValue = oaConfig; });
@@ -44,6 +50,7 @@ ipcMain.on('ci', e => {
     updateUrl: require('../asarUpdate').DEFAULT_URL,
     lastUpdate: settings.get('asarLastUpdate'),
     stats: settings.get('asarStats', []),
+    diag: global.asarDiag ?? null,
     hotkey: process.platform === 'darwin' ? 'Cmd + Option + O' : 'Ctrl + Alt + O'
   };
 });

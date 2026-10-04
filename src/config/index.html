@@ -379,7 +379,13 @@ $('restore').onclick = async () => {
 };
 
 // About
-const rows = [ [ 'asar', info.version ], [ 'Discord', info.discord && (info.discord + (info.channel ? ' (' + info.channel + ')' : '')) ], [ 'Electron', info.electron ], [ 'Platform', info.platform ] ];
+const d = info.diag;
+const tabStatus = !d ? 'Waiting for Discord to load' :
+  d.patched ? (d.builds > 0 ? 'Added' : 'Ready, open Discord settings') :
+  !d.wreq ? 'Not added: couldn\'t reach Discord\'s modules' :
+  !d.root ? 'Not added: settings code not found yet (' + d.wrapped + ' modules watched)' : 'Not added: ' + (d.error || 'patch failed');
+const rows = [ [ 'asar', info.version ], [ 'Discord', info.discord && (info.discord + (info.channel ? ' (' + info.channel + ')' : '')) ], [ 'Electron', info.electron ], [ 'Platform', info.platform ],
+  [ 'Settings tab', tabStatus ], [ 'Details', d && `root ${d.root ? 'yes' : 'no'} · types ${d.types ? 'yes' : 'default'} · react ${d.react ? 'yes' : 'no'} · builds ${d.builds} · line ${d.line ? 'yes' : 'no'}` + (d.error ? ' · ' + d.error : '') ] ];
 $('kv').innerHTML = '';
 for (const [ k, v ] of rows) if (v) { const dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = k; dd.textContent = v; $('kv').append(dt, dd); }
 

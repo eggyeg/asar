@@ -79,9 +79,19 @@ document.addEventListener('visibilitychange', () => document.hidden && safeSync(
 
 // --- "asar" tab in Discord's settings ---
 // Discord's settings (2025+) are built from a layout tree whose root has key "$Root" and a buildLayout() method.
-// We find it through Discord's webpack module cache and add an "asar" section, the same way Vencord and
-// BetterDiscord add theirs. This doesn't depend on class names or the UI language.
-// Nothing runs on a timer: lookups happen a few times after load and after clicks/keypresses until patched.
+// We add an "asar" section to it through Discord's webpack modules, the same way Vencord and BetterDiscord do.
+// Independent of class names and UI language. Every step is recorded in `diag` (asar settings > About, and
+// asar-diagnostics.json in Discord's data folder) so a failure can be pinpointed.
+const diag = { version: cfg.version, wreq: false, root: false, types: false, react: false, wrapped: 0, patched: false, builds: 0, line: false, error: null };
+let lastReport = '';
+const report = () => {
+  const s = JSON.stringify(diag);
+  if (s === lastReport) return;
+  lastReport = s;
+  try { DiscordNative.ipc.send('DISCORD_UPDATED_QUOTES', { asarDiag: diag }); } catch { }
+};
+const fail = (where, e) => { diag.error = where + ': ' + (e?.message ?? e); report(); };
+
 let wreq, root, types, React, patched = false;
 const scanned = new Set();
 
@@ -91,13 +101,14 @@ const getReq = () => {
   if (!chunk?.push) return;
   chunk.push([ [ Symbol('asar') ], {}, r => { wreq = r; } ]);
   chunk.pop();
+  diag.wreq = !!wreq?.c;
   return wreq;
 };
 
 const check = v => {
   if (!v || (typeof v !== 'object' && typeof v !== 'function')) return;
   if (!root && v.key === '$Root' && typeof v.buildLayout === 'function') root = v;
-  else if (!types && typeof v.SIDEBAR_ITEM === 'number' && typeof v.SECTION === 'number' && typeof v.PANEL === 'number' && typeof v.CUSTOM === 'number') types = v;
+  else if (!types && typeof v.SIDEBAR_ITEM === 'number' && typeof v.SECTION === 'number' && typeof v.PANEL === 'number') types = v;
   else if (!React && typeof v.createElement === 'function' && typeof v.useEffect === 'function' && typeof v.Fragment !== 'undefined') React = v;
 };
 
@@ -106,7 +117,7 @@ const scan = () => {
   if (!cache) return;
 
   for (const id in cache) {
-    if (root && types && React) return;
+    if (root && types && React) break;
     if (scanned.has(id)) continue;
 
     const ex = cache[id]?.exports;
@@ -118,6 +129,8 @@ const scan = () => {
       scanned.add(id);
     } catch { } // export not initialised yet (TDZ); look again next scan
   }
+
+  diag.root = !!root; diag.types = !!types; diag.react = !!React;
 };
 
 const lastLaunch = cfg.stats?.last ? `Last launch: Discord window in ${cfg.stats.last.toFixed(1)} s` + (cfg.stats.avg ? ` (average ${cfg.stats.avg.toFixed(1)} s over ${cfg.stats.n} launches)` : '') : '';
@@ -143,12 +156,21 @@ const Icon = () => React.createElement('svg', { width: 20, height: 20, viewBox: 
   React.createElement('path', { d: 'M32 8 56 20 32 32 8 20Z' })
 );
 
+// Vencord's defaults for Discord's layout node types, used if the enum module isn't loaded yet
+const DEFAULT_TYPES = { SECTION: 1, SIDEBAR_ITEM: 2, PANEL: 3, CATEGORY: 5, CUSTOM: 19 };
+
 const buildSection = () => {
-  const T = types;
-  const custom = { key: 'asar_custom', type: T.CUSTOM, Component: Panel, useSearchTerms: () => [ 'asar', 'openasar' ] };
-  const category = { key: 'asar_category', type: T.CATEGORY ?? 5, buildLayout: () => [ custom ] };
-  const panel = { key: 'asar_panel', type: T.PANEL, useTitle: () => 'asar', buildLayout: () => [ category ] };
-  const item = { key: 'asar_main', type: T.SIDEBAR_ITEM, useTitle: () => 'asar', icon: () => React.createElement(Icon), buildLayout: () => [ panel ] };
+  const T = types ?? DEFAULT_TYPES;
+  let item;
+
+  if (React) { // Full tab with a panel (Vencord-style)
+    const custom = { key: 'asar_custom', type: T.CUSTOM, Component: Panel, useSearchTerms: () => [ 'asar', 'openasar' ] };
+    const category = { key: 'asar_category', type: T.CATEGORY ?? 5, buildLayout: () => [ custom ] };
+    const panel = { key: 'asar_panel', type: T.PANEL, useTitle: () => 'asar', buildLayout: () => [ category ] };
+    item = { key: 'asar_main', type: T.SIDEBAR_ITEM, useTitle: () => 'asar', icon: () => React.createElement(Icon), buildLayout: () => [ panel ] };
+  } else { // No React found: a sidebar item that just opens the window (BetterDiscord-style onClick item)
+    item = { key: 'asar_main', type: T.SIDEBAR_ITEM, useTitle: () => 'asar', icon: () => null, buildLayout: () => [], onClick: open, usePredicate: () => true, useSearchTerms: () => [ 'asar' ] };
+  }
 
   return { key: 'asar_section', type: T.SECTION, useTitle: () => 'asar', buildLayout: () => [ item ] };
 };
@@ -156,48 +178,65 @@ const buildSection = () => {
 const patchSettings = () => {
   if (patched) return true;
   scan();
-  if (!root || !types || !React) return false;
+  if (!root) { report(); return false; }
 
   const orig = root.buildLayout;
   const wrapped = function (...args) {
     const layout = orig.apply(this, args);
+    diag.builds++;
+    setTimeout(versionLine, 400); // settings are opening: add the version line too
     try {
       if (Array.isArray(layout) && !layout.some(s => s?.key === 'asar_section')) {
         let i = layout.findIndex(s => s?.key === 'games_and_apps_section');
         if (i === -1) i = layout.findIndex(s => s?.key === 'utility_section') - 1;
         layout.splice(i < 0 ? layout.length : i + 1, 0, buildSection());
       }
-    } catch { }
+    } catch (e) { fail('buildLayout', e); }
+    report();
     return layout;
   };
 
   try { root.buildLayout = wrapped; } catch { }
-  if (root.buildLayout !== wrapped) try { Object.defineProperty(root, 'buildLayout', { value: wrapped, configurable: true, writable: true }); } catch { }
+  if (root.buildLayout !== wrapped) try { Object.defineProperty(root, 'buildLayout', { value: wrapped, configurable: true, writable: true }); } catch (e) { fail('patch', e); }
 
-  patched = root.buildLayout === wrapped;
+  patched = diag.patched = root.buildLayout === wrapped;
+  report();
   if (patched) cleanup();
   return patched;
 };
 
-// Fallback when the layout tree can't be patched: a clickable "asar" line next to Discord's build info
-// (the "Stable 123456 (abc1234)" lines at the bottom of the settings sidebar). Language independent.
-let lastFallback = 0;
-const domFallback = () => {
-  if (document.getElementById('asar-ver') || Date.now() - lastFallback < 2000) return;
-  lastFallback = Date.now();
-  const x = document.evaluate('//*[not(*)][starts-with(normalize-space(.),"Stable ") or starts-with(normalize-space(.),"PTB ") or starts-with(normalize-space(.),"Canary ")][contains(.,"(")]', document.body, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-  if (!x) return;
+// Discord downloads its settings code early but only runs it the first time settings opens, then builds the menu.
+// Wrap every not-yet-run module that mentions "$Root" (like BetterDiscord does for all modules) so the root is
+// patched the instant its module runs, before the menu is built. Also hook chunks that arrive later.
+const wrapFactory = (mods, id, onDone) => {
+  const f = mods[id];
+  if (typeof f !== 'function' || f.__asar) return;
+  let src;
+  try { src = Function.prototype.toString.call(f); } catch { return; }
+  if (!src.includes('$Root')) return;
 
-  const ver = x.cloneNode(false);
-  ver.id = 'asar-ver';
-  ver.textContent = 'asar ' + cfg.version + ' — open settings';
-  Object.assign(ver.style, { display: 'block', cursor: 'pointer', textDecoration: 'underline' });
-  ver.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); open(); }, true);
-  x.insertAdjacentElement('afterend', ver);
+  const w = function () {
+    try { return f.apply(this, arguments); }
+    finally {
+      try { if (onDone) onDone(f); } catch { }
+      try { patchSettings(); } catch (e) { fail('afterModule', e); }
+    }
+  };
+  w.__asar = true;
+  w.toString = () => src;
+  mods[id] = w;
+  diag.wrapped++;
 };
 
-// Discord may load its settings code lazily (the first time you open settings). Hook chunk loading so the settings
-// root is patched the moment its module runs, before it renders - otherwise the tab would only show on the 2nd open.
+const wrapPending = () => {
+  const r = getReq();
+  if (!r?.m) return;
+  for (const id in r.m) {
+    if (r.c?.[id]) continue; // already ran
+    wrapFactory(r.m, id, f => { r.m[id] = f; });
+  }
+};
+
 let unhook = () => { };
 const hookChunks = () => {
   const chunk = window.webpackChunkdiscord_app;
@@ -207,15 +246,7 @@ const hookChunks = () => {
   const hooked = function (data) {
     try {
       const mods = data?.[1];
-      if (!patched && mods && typeof mods === 'object') for (const id in mods) {
-        const f = mods[id];
-        if (typeof f !== 'function' || !Function.prototype.toString.call(f).includes('$Root')) continue;
-        mods[id] = function () {
-          const r = f.apply(this, arguments);
-          try { patchSettings(); } catch { }
-          return r;
-        };
-      }
+      if (!patched && mods && typeof mods === 'object') for (const id in mods) wrapFactory(mods, id);
     } catch { }
     return orig.apply(this, arguments);
   };
@@ -225,26 +256,58 @@ const hookChunks = () => {
   unhook = () => { if (chunk.push === hooked) chunk.push = orig; chunk.__asarHooked = false; };
 };
 
+// Always-visible "asar" line under Discord's build info at the bottom of the settings sidebar
+// ("stable 627798 (01ad173) • 1.0.9260 x64"). Matched case-insensitively on the release channel, so it works in any language.
+const VERSION_XPATH = '//text()[contains(.,"(")][' + [ 'stable', 'Stable', 'STABLE', 'ptb', 'PTB', 'Ptb', 'canary', 'Canary', 'CANARY', 'development', 'Development' ]
+  .map(c => `starts-with(normalize-space(.),"${c} ")`).join(' or ') + ']';
+let lastLine = 0, lineTimer = 0;
+const versionLine = () => {
+  if (document.getElementById('asar-ver')) return;
+  const wait = 1500 - (Date.now() - lastLine);
+  if (wait > 0) { // rate limited: try again once the window has passed instead of dropping it
+    if (!lineTimer) lineTimer = setTimeout(() => { lineTimer = 0; versionLine(); }, wait + 20);
+    return;
+  }
+  lastLine = Date.now();
+
+  const res = document.evaluate(VERSION_XPATH, document.body, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+  for (let i = 0; i < res.snapshotLength; i++) {
+    const t = res.snapshotItem(i);
+    if (!/^(stable|ptb|canary|development)\s+\d+/i.test(t.nodeValue.trim())) continue;
+
+    const el = t.parentElement;
+    const anchor = el.closest('div') ?? el;
+    const ver = el.cloneNode(false);
+    ver.removeAttribute('id');
+    ver.id = 'asar-ver';
+    ver.textContent = `asar ${cfg.version} · open settings (${cfg.hotkey})`;
+    Object.assign(ver.style, { display: 'block', cursor: 'pointer', textDecoration: 'underline', marginTop: '4px' });
+    ver.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); open(); }, true);
+    anchor.insertAdjacentElement('afterend', ver);
+    diag.line = true;
+    report();
+    return;
+  }
+};
+
 let timer;
 const attempt = () => {
-  try { if (patchSettings()) return; } catch { }
-  try { domFallback(); } catch { }
+  try { patchSettings(); } catch (e) { fail('attempt', e); }
+  try { versionLine(); } catch (e) { fail('line', e); }
 };
 const schedule = () => {
   clearTimeout(timer);
-  timer = setTimeout(attempt, 250);
+  timer = setTimeout(attempt, 200);
 };
-const cleanup = () => {
-  unhook();
-  document.removeEventListener('click', schedule, true);
-  document.removeEventListener('keyup', schedule, true);
-};
+const cleanup = () => unhook();
 
 if (cfg.entry) {
-  try { getReq(); hookChunks(); } catch { }
-  for (const t of [ 1500, 5000, 15000, 40000 ]) setTimeout(attempt, t);
+  try { getReq(); hookChunks(); wrapPending(); } catch (e) { fail('init', e); }
+  for (const t of [ 1000, 4000, 15000 ]) setTimeout(attempt, t);
+  // Settings only open after a click or key press, so that's the only time we look for the version line
   document.addEventListener('click', schedule, true);
   document.addEventListener('keyup', schedule, true);
+  report();
 }
 
 // Clicking the asar tab always opens the window, even when the tab is already selected (Discord doesn't re-render then)
