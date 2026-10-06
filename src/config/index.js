@@ -60,6 +60,9 @@ ipcMain.on('ci', e => {
     diag: global.asarDiag ?? null,
     freezes: global.asarFreezes ? { count: global.asarFreezes.count, longest: global.asarFreezes.longest, gpu: global.asarFreezes.gpu } : null,
     migrated: !!global.asarMigrated,
+    pure: !!global.asarPure,
+    mainStalls: global.asarMainStalls ?? null,
+    cachesClearedAt: settings.get('asarCachesClearedAt') ?? null,
     hotkey: process.platform === 'darwin' ? 'Cmd + Option + O' : 'Ctrl + Alt + O'
   };
 });
@@ -70,6 +73,12 @@ ipcMain.handle('cu', async () => {
   } catch (e) {
     return 'Update failed: ' + (e?.message ?? e);
   }
+});
+
+ipcMain.handle('ck', async () => { // Repair caches: deleted on next start, before Chromium opens them
+  settings.set('asarClearCaches', [ 'gpu', 'code', 'http' ]);
+  settings.save();
+  return 'ok';
 });
 
 ipcMain.handle('cx', async () => { // Restore stock Discord

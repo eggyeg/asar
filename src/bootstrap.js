@@ -67,8 +67,10 @@ const launchStats = () => {
 
 // Opt-in: raise ALL of Discord's processes above other apps (Windows only). 1.1 raised only the UI, GPU and main
 // processes, which starved Discord's own network and audio/video processes while a heavy channel was rendering.
+const pure = global.asarPure = oaConfig.pure === true; // "Test as stock Discord": asar changes nothing but measures
+
 const boostPriority = () => {
-  if (process.platform !== 'win32' || oaConfig.priority !== true || oaConfig.safeMode) return;
+  if (process.platform !== 'win32' || oaConfig.priority !== true || oaConfig.safeMode || pure) return;
   const os = require('os');
   for (const m of app.getAppMetrics()) {
     try { os.setPriority(m.pid, os.constants.priority.PRIORITY_ABOVE_NORMAL); } catch { }
@@ -127,6 +129,24 @@ const recordFreeze = (kind, ms, extra) => {
 };
 global.asarRecordFreeze = recordFreeze;
 
+// Main-process stall monitor: Discord's main process handles IPC from the page and the voice/stream engine. If it's
+// blocked, opening channels and starting/stopping streams wait on it. Logged (not used for safe mode).
+const mainStalls = global.asarMainStalls = { count: 0, longest: 0 };
+const watchMainLoop = () => {
+  let last = Date.now();
+  setInterval(() => {
+    const now = Date.now();
+    const lag = now - last - 500;
+    last = now;
+    if (lag < 1000) return;
+    mainStalls.count++;
+    mainStalls.longest = Math.max(mainStalls.longest, lag);
+    freezes.events.push({ at: new Date().toISOString(), kind: 'main', ms: lag });
+    log('Watchdog', 'main process stalled', lag + 'ms');
+    saveFreezes();
+  }, 500).unref?.();
+};
+
 app.on('child-process-gone', (e, d) => {
   if (d.type !== 'GPU' || d.reason === 'clean-exit') return;
   recordFreeze('gpu', 0, { reason: d.reason, exitCode: d.exitCode });
@@ -145,9 +165,12 @@ const watchWindow = bw => {
 };
 
 const startCore = () => {
-  // Custom CSS/JS need Discord's page CSP removed. Only the page document is routed through here; OpenAsar inspected
-  // every response (each image and attachment in a channel) in the main process, which slows image-heavy channels.
-  if (oaConfig.js || oaConfig.css) session.defaultSession.webRequest.onHeadersReceived({
+  // asar registers NO network hooks by default. While any session.webRequest listener exists, Electron routes every
+  // request (messages, images, stream setup) through Discord's main process, so whenever that process is busy -
+  // e.g. starting or stopping a screen share - all loading waits on it. Custom CSS/JS don't need the page's CSP
+  // removed (insertCSS / executeJavaScript bypass it); removing it is an advanced opt-in for scripts that load
+  // external resources.
+  if (oaConfig.removeCSP === true && !pure) session.defaultSession.webRequest.onHeadersReceived({
     urls: [ 'app*', 'channels/*', 'popout*', 'login*' ].flatMap(p => [ 'https://discord.com/' + p, 'https://*.discord.com/' + p ])
   }, (d, cb) => {
     if (d.resourceType !== 'mainFrame' && d.resourceType !== 'subFrame') return cb({});
@@ -162,15 +185,16 @@ const startCore = () => {
   const injectedSrc = readFileSync(join(__dirname, 'mainWindow.js'), 'utf8');
   const injected = () => injectedSrc.replace('__ASAR_CFG__', () => JSON.stringify({
     version: asarVersion,
-    noTrack: oaConfig.noTrack !== false,
-    domOpt: oaConfig.domOptimizer === true && !oaConfig.safeMode,
-    themeSync: oaConfig.themeSync !== false,
+    noTrack: oaConfig.noTrack !== false && !pure,
+    noTyping: oaConfig.noTyping === true && !pure,
+    domOpt: oaConfig.domOptimizer === true && !oaConfig.safeMode && !pure,
+    themeSync: oaConfig.themeSync !== false && !pure,
     entry: oaConfig.settingsEntry !== false,
-    noBlur: oaConfig.noBlur !== false,
-    instant: oaConfig.instantUI !== false,
+    noBlur: oaConfig.noBlur !== false && !pure,
+    instant: oaConfig.instantUI !== false && !pure,
+    pure,
     hotkey: hotkeyLabel,
-    stats: launchStats(),
-    css: oaConfig.css ?? ''
+    stats: launchStats()
   }));
 
   let firstReady = true;
@@ -189,7 +213,8 @@ const startCore = () => {
       splash.pageReady(); // Show main window as soon as the DOM is ready instead of waiting on Core
 
       bw.webContents.executeJavaScript(injected()).catch(e => log('Inject', e));
-      if (oaConfig.js) bw.webContents.executeJavaScript(oaConfig.js).catch(e => log('Inject', 'Custom JS', e));
+      if (!pure && oaConfig.css) bw.webContents.insertCSS(oaConfig.css).catch(e => log('Inject', 'Custom CSS', e));
+      if (!pure && oaConfig.js) bw.webContents.executeJavaScript(oaConfig.js).catch(e => log('Inject', 'Custom JS', e));
     });
 
     // Hotkey that always opens asar settings, even if Discord changes its settings UI again
@@ -240,13 +265,8 @@ const startCore = () => {
 };
 
 const startUpdate = () => {
-  const noTrack = oaConfig.noTrack !== false;
-  const urls = [
-    ...(noTrack ? [ 'https://*/api/*/science', 'https://*/api/*/metrics', 'https://*/error-reporting-proxy/*', 'https://*.sentry.io/*' ] : []),
-    ...(oaConfig.noTyping === true ? [ 'https://*/api/*/typing' ] : [])
-  ];
-
-  if (urls.length > 0) session.defaultSession.webRequest.onBeforeRequest({ urls }, (e, cb) => cb({ cancel: true }));
+  // Tracking / typing requests are blocked inside Discord's page (mainWindow.js), not with a network hook.
+  watchMainLoop();
 
   const startMin = process.argv?.includes?.('--start-minimized');
   if (Constants.USE_NEW_UPDATER && updater.tryInitUpdater(buildInfo, Constants.NEW_UPDATE_ENDPOINT, Constants.USE_RUST_BSPATCH)) {

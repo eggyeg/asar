@@ -20,6 +20,45 @@ if (cfg.noTrack) {
   } catch { }
 }
 
+// --- Block tracking / typing requests inside the page ---
+// (Not with a network hook: those make every request in Discord wait on its main process.) Blocked requests resolve
+// instantly as 204 No Content, so Discord treats them as sent and never retries.
+const blockParts = [
+  cfg.noTrack && '/api/v\\d+/(?:science|metrics|track)(?:[/?#]|$)',
+  cfg.noTrack && '/error-reporting-proxy/',
+  cfg.noTrack && '\\.sentry\\.io/',
+  cfg.noTyping && '/api/v\\d+/channels/\\d+/typing(?:[?#]|$)'
+].filter(Boolean);
+
+if (blockParts.length) {
+  const blockRe = new RegExp(blockParts.join('|'));
+  const blocked = u => { try { return blockRe.test(String(u)); } catch { return false; } };
+
+  const XP = XMLHttpRequest.prototype, xOpen = XP.open, xSend = XP.send;
+  XP.open = function (method, url) {
+    this.__asarBlocked = blocked(url);
+    return xOpen.apply(this, arguments);
+  };
+  XP.send = function () {
+    if (!this.__asarBlocked) return xSend.apply(this, arguments);
+    const x = this;
+    setTimeout(() => {
+      for (const [ k, v ] of [ [ 'readyState', 4 ], [ 'status', 204 ], [ 'statusText', 'No Content' ], [ 'responseText', '' ], [ 'response', '' ], [ 'responseURL', '' ] ])
+        Object.defineProperty(x, k, { configurable: true, value: v });
+      for (const t of [ 'readystatechange', 'load', 'loadend' ]) x.dispatchEvent(new ProgressEvent(t));
+    }, 0);
+  };
+
+  const oFetch = window.fetch;
+  window.fetch = function (input) {
+    if (blocked(typeof input === 'string' ? input : input?.url)) return Promise.resolve(new Response(null, { status: 204 }));
+    return oFetch.apply(this, arguments);
+  };
+
+  const oBeacon = navigator.sendBeacon?.bind(navigator);
+  if (oBeacon) navigator.sendBeacon = (url, data) => blocked(url) ? true : oBeacon(url, data);
+}
+
 // --- Performance CSS ---
 // Blur (backdrop-filter) is one of the most expensive things Chromium composites; Discord's refreshed UI uses it on
 // popouts, modals and overlays. Animations are turned off separately via --force-prefers-reduced-motion in the main process.
@@ -327,6 +366,35 @@ if (cfg.entry) {
     }
   }, 1000);
 }
+
+// Slow-request log: any request that takes over 2 s, split into where the time went, so a slow channel can be
+// pinned on the network/Discord's servers ("waiting for server") or on this PC ("stalled before sending").
+// Only the host and path are kept, with long numbers (channel/message IDs) replaced by :id.
+try {
+  diag.slow = [];
+  new PerformanceObserver(list => {
+    let changed = false;
+    for (const e of list.getEntries()) {
+      if (e.duration < 2000 || !/^https?:/.test(e.name)) continue;
+      let where = e.name;
+      try { const u = new URL(e.name); where = u.host + u.pathname.replace(/\d{6,}/g, ':id'); } catch { }
+      const r = e.requestStart > 0;
+      diag.slow.push({
+        at: new Date(performance.timeOrigin + e.startTime).toISOString(),
+        where,
+        total: Math.round(e.duration),
+        stalled: r ? Math.round(e.requestStart - e.startTime) : null,
+        server: r ? Math.round(e.responseStart - e.requestStart) : null,
+        download: r ? Math.round(e.responseEnd - e.responseStart) : null
+      });
+      changed = true;
+    }
+    if (changed) {
+      if (diag.slow.length > 25) diag.slow.splice(0, diag.slow.length - 25);
+      report();
+    }
+  }).observe({ type: 'resource', buffered: false });
+} catch { }
 
 // Freeze diagnostics: long tasks (>1 s) on Discord's page, reported to asar-diagnostics.json
 try {

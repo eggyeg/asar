@@ -119,6 +119,11 @@ textarea { font: 12.5px/1.5 ui-monospace, "Cascadia Code", Menlo, Consolas, mono
 .notice.info { border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
 .notice span { color: var(--muted); }
 .notice .btn { justify-self: start; margin-top: 2px; }
+.verdict { font-size: 12.5px; line-height: 1.5; }
+.verdict b { color: var(--text); }
+.slowlist { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; font: 11.5px/1.45 ui-monospace, Menlo, Consolas, monospace; color: var(--muted); }
+.slowlist li { display: grid; gap: 1px; padding: 5px 0; border-top: 1px solid var(--line); }
+.slowlist li span:first-child { color: var(--text); overflow-wrap: anywhere; }
 .freeze { margin-top: 10px; font-size: 12px; color: var(--muted); }
 .freeze.bad { color: #f0b232; }
 .warn { font-size: 12px; color: #f0b232; margin-top: 5px; }
@@ -181,6 +186,16 @@ body:has(.bar.on) .content { padding-bottom: 72px; }
         <b>Your settings were made safer</b>
         <span>Earlier asar versions forced GPU flags and a high process priority that can freeze Discord for up to 30 seconds on some PCs, especially while screen sharing. They're now off. You can turn them back on below.</span>
       </div>
+      <div class="notice info" id="purebox" hidden>
+        <b>Testing as stock Discord</b>
+        <span>asar isn't changing anything right now: no flags, no blocking, no styles. It only measures. Check whether the slowdown still happens, then turn this off below.</span>
+      </div>
+      <div class="speed" id="loadcheck">
+        <div class="speed-head"><b>Slow loading check</b><span id="lcsum">Requests over 2 s and stalls, this session</span></div>
+        <div class="verdict" id="verdict">Nothing slow recorded yet. Open the channel or start the stream that's slow, then come back here.</div>
+        <ul class="slowlist" id="slowlist"></ul>
+      </div>
+      <div class="row"><div class="t"><b>Test as stock Discord</b><span>Turns off everything asar changes (flags, blocking, styles, speed-ups) but keeps measuring, so you can see if a slowdown also happens without asar. Restart to apply.</span></div><label class="sw"><input type="checkbox" data-k="pure" data-d="false"><i></i></label></div>
       <div class="speed" id="speed">
         <div class="speed-head"><b>Startup time</b><span id="speedsum">Measured from launch until Discord's window is ready.</span></div>
         <div class="bars" id="bars"><span class="empty">No launches recorded yet. Restart Discord to get your first number.</span></div>
@@ -245,6 +260,8 @@ body:has(.bar.on) .content { padding-bottom: 72px; }
       <div class="last" id="last"><span class="ldot" id="ldot"></span><span id="ltext">Not checked yet. Click Check now, or restart Discord.</span></div>
       <h3>Files</h3>
       <div class="row"><div class="t"><b>settings.json</b><span>Discord and asar's raw settings file.</span></div><button class="btn" id="openfile">Open</button></div>
+      <h3>Repair</h3>
+      <div class="row"><div class="t"><b>Repair caches</b><span id="cachedesc">Clears Discord's graphics, code and download caches the next time Discord starts. A common fix for slow loading and glitches. Images download again once.</span></div><button class="btn" id="repair">Repair</button></div>
       <h3>Restore</h3>
       <div class="row"><div class="t"><b>Restore stock Discord</b><span id="rdesc">Puts back Discord's original app.asar and restarts. asar is kept as app.asar.asar-fork.</span></div><button class="btn danger" id="restore">Restore</button></div>
       <div class="status" id="rstatus"></div>
@@ -381,6 +398,44 @@ if (stats.length) {
   $('speedsum').textContent = 'Last launch ' + stats[stats.length - 1].t.toFixed(1) + ' s' + (recent.length > 1 ? ' · average ' + avg.toFixed(1) + ' s' : '');
 }
 if (info.platform && info.platform !== 'win32') $('prow').hidden = true;
+
+// Slow loading check
+if (info.pure) $('purebox').hidden = false;
+{
+  const slow = (info.diag?.slow ?? []).slice(-8).reverse();
+  const ms = info.mainStalls;
+  const fzc = info.freezes;
+  const s = n => (n / 1000).toFixed(1) + ' s';
+  if (slow.length) {
+    $('slowlist').innerHTML = '';
+    for (const r of slow) {
+      const li = document.createElement('li');
+      const a = document.createElement('span'); a.textContent = r.where;
+      const b = document.createElement('span');
+      b.textContent = s(r.total) + (r.server != null ? ` · server ${s(r.server)} · waited ${s(r.stalled)}` : '');
+      li.append(a, b); $('slowlist').append(li);
+    }
+  }
+  // Verdict: where did the time go?
+  const known = slow.filter(r => r.server != null);
+  const serverHeavy = known.filter(r => r.server > r.total * 0.6).length;
+  const stallHeavy = known.filter(r => r.stalled > r.total * 0.6).length;
+  let v = null;
+  if (ms?.count && ms.longest >= 2000) v = `<b>Discord's main process got stuck</b> ${ms.count} time${ms.count === 1 ? '' : 's'} (longest ${s(ms.longest)}). Loading and streams wait on it. Try “Test as stock Discord” to see if it happens without asar too.`;
+  else if (fzc?.count) v = `<b>Discord's page froze</b> ${fzc.count} time${fzc.count === 1 ? '' : 's'} (longest ${s(fzc.longest)}). Try “Test as stock Discord”, and Repair caches under Advanced.`;
+  else if (known.length && serverHeavy >= known.length / 2) v = `<b>Most of the wait is Discord's servers or your connection</b>, not this PC: requests sat waiting for a reply. asar can't speed that up; a VPN or different network may.`;
+  else if (known.length && stallHeavy >= known.length / 2) v = `<b>Requests waited on this PC before being sent.</b> That usually means too many downloads at once or a busy PC. Try Repair caches under Advanced.`;
+  else if (slow.length) v = `<b>Some downloads were slow</b> (mostly images/media). That's usually your connection or Discord's media servers.`;
+  if (v) $('verdict').innerHTML = v;
+  $('lcsum').textContent = slow.length ? slow.length + ' slow request' + (slow.length === 1 ? '' : 's') : 'Requests over 2 s and stalls, this session';
+}
+if (info.cachesClearedAt) $('cachedesc').textContent += ' Last repaired ' + new Date(info.cachesClearedAt).toLocaleString() + '.';
+$('repair').onclick = async () => {
+  $('repair').disabled = true;
+  await Native.repairCaches();
+  $('repair').textContent = 'Restart to finish';
+  $('bar').classList.add('on');
+};
 
 // Safe mode / migration / freezes
 if (cfg.safeMode) {

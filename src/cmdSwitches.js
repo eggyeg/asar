@@ -21,7 +21,7 @@ const presets = {
 };
 
 const presetName = () => {
-  if (oaConfig.safeMode) return 'stock';
+  if (oaConfig.safeMode || oaConfig.pure) return 'stock';
   const p = oaConfig.cmdPreset;
   if (p === 'perf') return 'gpu';
   if (p === 'balanced' || !presets[p]) return 'stock';
@@ -30,13 +30,13 @@ const presetName = () => {
 
 const apply = () => {
   const preset = presetName();
-  const flags = oaConfig.safeMode ? [] : (oaConfig.customFlags ?? '').split(' ');
+  const flags = oaConfig.safeMode || oaConfig.pure ? [] : (oaConfig.customFlags ?? '').split(' ');
   for (const p of [ 'base', preset ]) if (presets[p]) flags.push(...presets[p].split(' '));
-  log('Flags', 'Preset', preset + (oaConfig.safeMode ? ' (safe mode)' : ''));
+  log('Flags', 'Preset', preset + (oaConfig.pure ? ' (testing as stock Discord)' : oaConfig.safeMode ? ' (safe mode)' : ''));
 
   // Instant UI: Discord follows the system "reduce motion" setting by default, so this switches off its
   // JS-driven animations (modals, popouts, channel switches) properly rather than just CSS ones
-  if (oaConfig.instantUI !== false) flags.push('--force-prefers-reduced-motion');
+  if (oaConfig.instantUI !== false && !oaConfig.pure) flags.push('--force-prefers-reduced-motion');
 
   if (process.platform === 'linux' && settings.get('openH264Enabled', true))
     flags.push('--enable-libopenh264', '--openh264-library-path=' + join(paths.getAssetCachePath(), 'openh264', 'libopenh264-2.5.1-linux64.7.so'));

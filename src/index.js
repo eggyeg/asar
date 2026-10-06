@@ -1,6 +1,6 @@
 const { join } = require('path');
 
-global.asarVersion = '1.2.0';
+global.asarVersion = '1.3.0';
 global.oaVersion = global.asarVersion; // Kept for compatibility with mods that read it
 
 global.log = (area, ...args) => console.log(`[\x1b[38;2;139;123;255masar\x1b[0m > ${area}]`, ...args);
@@ -29,11 +29,41 @@ if ((oaConfig.configVersion ?? 0) < 2) {
   global.asarMigrated = true;
 }
 
+// asar 1.3: the GPU flags earlier versions forced can leave shader/GPU caches built for them; clear those once.
+if ((oaConfig.configVersion ?? 0) < 3) {
+  const c = { ...global.oaConfig, configVersion: 3 };
+  global.oaConfig = c;
+  settings.set('asar', c);
+  settings.set('asarClearCaches', [ ...new Set([ ...(settings.get('asarClearCaches') ?? []), 'gpu' ]) ]);
+  settings.save();
+}
+
+// "Repair caches" (asar settings > Advanced) and the migration above schedule cache folders to be deleted here,
+// before Chromium opens them. Chromium recreates them as needed.
+{
+  const want = settings.get('asarClearCaches');
+  if (Array.isArray(want) && want.length) {
+    const groups = {
+      gpu: [ 'GPUCache', 'DawnCache', 'DawnGraphiteCache', 'DawnWebGPUCache', 'ShaderCache', 'GrShaderCache' ],
+      code: [ 'Code Cache' ],
+      http: [ 'Cache' ]
+    };
+    const fs = require('fs');
+    for (const g of want) for (const d of groups[g] ?? []) {
+      try { fs.rmSync(join(paths.getUserData(), d), { recursive: true, force: true }); } catch (e) { log('Init', 'Could not clear', d, e?.message); }
+    }
+    log('Init', 'Cleared caches', want.join(', '));
+    settings.set('asarClearCaches', []);
+    settings.set('asarCachesClearedAt', Date.now());
+    settings.save();
+  }
+}
+
 const M = require('module');
 
 // V8 compile cache (Node 22+ / Electron 33+): caches bytecode for every module required after this point,
 // including discord_desktop_core, cutting main-process startup parse/compile time on every launch after the first.
-if (oaConfig.compileCache !== false) try {
+if (oaConfig.compileCache !== false && oaConfig.pure !== true) try {
   const r = M.enableCompileCache?.(join(paths.getUserData(), 'asar_cache'));
   if (r) log('Init', 'Compile cache', ['failed', 'enabled', 'enabled', 'disabled'][r.status] ?? r.status);
 } catch (e) { log('Init', 'Compile cache unavailable', e?.message); }
