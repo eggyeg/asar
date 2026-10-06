@@ -4,12 +4,13 @@
   Downloads the latest asar build and puts it in place of Discord's app.asar
   (Stable, PTB and Canary), keeping a backup of Discord's original.
 
-    install.bat              install or update asar
-    install.bat -Uninstall   put stock Discord back
+    asar-setup.bat              install or update asar
+    asar-setup.bat -Uninstall   put stock Discord back
 #>
 param(
   [switch]$Uninstall,
   [switch]$NoStart,
+  [switch]$Bat, # run from asar-setup.bat: report success/failure as the process exit code
   [string]$Url = 'https://raw.githubusercontent.com/eggyeg/asar/build/app.asar',
   [string]$Root = $env:LOCALAPPDATA
 )
@@ -143,10 +144,12 @@ try {
     Say '  Open asar settings from the "asar" tab in Discord settings, or press Ctrl + Alt + O.' 'Gray'
   }
   Say ''
+  if ($Bat) { exit 0 }
   return
 } catch {
   Say ''
   Say "  Error: $($_.Exception.Message)" 'Red'
   Say ''
+  if ($Bat) { exit 1 }
   return
 }

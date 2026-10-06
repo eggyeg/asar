@@ -6,7 +6,7 @@ A faster, self-contained Discord desktop `app.asar`. It's a fork of [OpenAsar](h
 
 ## Install
 
-**Windows:** download [`install.bat`](https://github.com/eggyeg/asar/raw/main/install.bat) (right-click → Save link as) and double-click it. Or paste this into PowerShell:
+**Windows:** download [`asar-setup.bat`](https://github.com/eggyeg/asar/raw/main/asar-setup.bat) (right-click → Save link as) and double-click it. Or paste this into PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/eggyeg/asar/main/install.ps1 | iex
@@ -20,7 +20,7 @@ The installer:
 - installs it into every installed Discord version;
 - starts Discord again.
 
-Run it again any time to update. **`uninstall.bat`** (or `install.bat -Uninstall`) puts stock Discord back.
+Run it again any time to update. **`uninstall.bat`** (or `asar-setup.bat -Uninstall`) puts stock Discord back.
 
 **Linux / macOS:**
 
