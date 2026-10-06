@@ -21,11 +21,29 @@ const backupPath = () => {
   return dirs.flatMap(d => [ 'app.asar.backup', 'app.asar.orig', '_app.asar' ].map(x => join(d, x))).find(x => fs.existsSync(x));
 };
 
+let visitSave = 0;
+
 // IPC is registered exactly once (OpenAsar re-registered every time the window opened, leaking handlers)
 ipcMain.on('DISCORD_UPDATED_QUOTES', (e, c) => {
   if (c === 'o') return exports.open();
 
   if (c && typeof c === 'object' && typeof c.asarFreeze === 'number') return global.asarRecordFreeze?.('page', c.asarFreeze);
+
+  // Channel visit (for "keep top channels ready"): IDs only, kept to the 150 most recent, saved at most every 10 s
+  if (c && typeof c === 'object' && c.asarVisit) {
+    const id = String(c.asarVisit.c ?? ''), g = String(c.asarVisit.g ?? '');
+    if (!/^\d{5,25}$/.test(id) || !/^(@me|\d{5,25})$/.test(g)) return;
+    const v = settings.get('asarVisits', {});
+    const e = v[id] ?? { g, n: 0, t: 0 };
+    e.n++; e.t = Date.now(); e.g = g;
+    v[id] = e;
+    const keys = Object.keys(v);
+    if (keys.length > 150) for (const k of keys.sort((a, b) => v[a].t - v[b].t).slice(0, keys.length - 150)) delete v[k];
+    settings.set('asarVisits', v);
+    clearTimeout(visitSave);
+    visitSave = setTimeout(() => settings.save(), 10000);
+    return;
+  }
 
   // Status report from the injected script (is the settings tab in place, and if not, why)
   if (c && typeof c === 'object' && c.asarDiag) {

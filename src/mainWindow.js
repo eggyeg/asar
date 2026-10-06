@@ -453,10 +453,11 @@ const channelIdOf = a => {
   return m?.[1];
 };
 
-const prefetch = cid => {
-  if (!cfg.prefetch || document.hidden || location.pathname.endsWith('/' + cid)) return;
+// Returns 'gated' if it should be retried a bit later (rate limit), anything else means done/skipped
+const prefetch = (cid, kind = 'hover') => {
+  if (!(kind === 'kept' ? cfg.keepReady : cfg.prefetch) || document.hidden || location.pathname.endsWith('/' + cid)) return;
   if (Date.now() - (prefetched.get(cid) ?? 0) < 120000) return;
-  if (Date.now() - lastPrefetch < 500) return;
+  if (Date.now() - lastPrefetch < 500) return 'gated';
   if (!findPerf()) return;
   try {
     const ch = perfMods.channels.getChannel?.(cid);
@@ -466,10 +467,48 @@ const prefetch = cid => {
     prefetched.set(cid, Date.now());
     lastPrefetch = Date.now();
     diag.prefetch.sent++;
+    if (kind === 'kept') diag.prefetch.kept = (diag.prefetch.kept ?? 0) + 1;
     const r = perfMods.actions.fetchMessages({ channelId: cid, limit: 50 });
     if (r?.catch) r.catch(() => { diag.prefetch.failed++; });
   } catch { diag.prefetch.failed++; }
 };
+
+// --- Keep your top channels ready ---
+// Channels you open most (counted by asar, stored in Discord's settings.json) are loaded in the background: the top
+// 4 in the server you're in plus your top channels overall, max 10, one every 0.8 s, never while Discord is hidden.
+// Discord keeps loaded channels in memory, so this only sends a request for channels it doesn't have (or dropped).
+const guildOf = () => /^\/channels\/(@me|\d+)/.exec(location.pathname)?.[1];
+const warmQueue = [];
+let warmTimer = 0;
+const pump = () => {
+  warmTimer = 0;
+  if (!warmQueue.length) return;
+  if (document.hidden) { warmTimer = setTimeout(pump, 5000); return; }
+  const c = warmQueue.shift();
+  if (prefetch(c, 'kept') === 'gated') warmQueue.unshift(c);
+  warmTimer = setTimeout(pump, 800);
+};
+const keepReady = () => {
+  if (!cfg.keepReady || !findPerf()) return;
+  const top = cfg.top ?? [];
+  const g = guildOf();
+  const want = [ ...top.filter(v => v.g === g).slice(0, 4), ...top.slice(0, 8) ].map(v => v.c);
+  for (const c of new Set(want)) if (!warmQueue.includes(c) && warmQueue.length < 10) warmQueue.push(c);
+  if (!warmTimer) pump();
+};
+if (cfg.keepReady) {
+  let lastGuild = null;
+  setInterval(() => { // server switch -> keep that server's top channels ready
+    const g = guildOf();
+    if (g && g !== lastGuild) { lastGuild = g; keepReady(); }
+  }, 3000);
+  setInterval(keepReady, 300000);
+}
+
+if (cfg.prefetch || cfg.keepReady) {
+  // Find Discord's message modules while idle, so the first hover doesn't pay for it; then fill the keep-ready list
+  (window.requestIdleCallback ?? setTimeout)(() => { try { findPerf(); report(); keepReady(); } catch { } }, { timeout: 15000 });
+}
 
 if (cfg.prefetch) {
   document.addEventListener('mouseover', e => {
@@ -479,9 +518,39 @@ if (cfg.prefetch) {
     const cid = channelIdOf(a);
     if (cid) hoverTimer = setTimeout(() => prefetch(cid), 150);
   }, { capture: true, passive: true });
-  // Find Discord's message modules while idle, so the first hover doesn't pay for it
-  (window.requestIdleCallback ?? setTimeout)(() => { try { findPerf(); report(); } catch { } }, { timeout: 15000 });
 }
+
+// --- Loading indicator ---
+// A small asar pill at the top of the window, shown only if a channel or thread isn't on screen within 120 ms of the
+// click (instant switches show nothing). One element, its own scoped styles; nothing site-wide.
+let loader = null, loaderTimer = 0;
+const loaderEl = () => {
+  if (loader?.isConnected) return loader;
+  if (!document.getElementById('asar-loader-css')) addStyle('asar-loader-css', `
+#asar-loader{position:fixed;top:44px;left:50%;transform:translateX(-50%);z-index:2147483646;pointer-events:none;display:flex;align-items:center;gap:8px;padding:6px 12px 6px 10px;border-radius:999px;font:500 13px/1.2 var(--font-primary,system-ui,sans-serif);color:var(--text-default,var(--text-normal,#dbdee1));background:var(--background-floating,#111214);box-shadow:0 4px 16px rgb(0 0 0/.35);opacity:0;transition:opacity .12s}
+#asar-loader.on{opacity:1}
+#asar-loader i{width:12px;height:12px;border-radius:50%;border:2px solid color-mix(in srgb,var(--brand-500,#8b7bff) 30%,transparent);border-top-color:var(--brand-500,#8b7bff);animation:asar-spin .7s linear infinite}
+#asar-loader b{font-weight:600}
+@keyframes asar-spin{to{transform:rotate(360deg)}}`);
+  loader = document.createElement('div');
+  loader.id = 'asar-loader';
+  loader.setAttribute('role', 'status');
+  loader.innerHTML = '<i></i><span></span>';
+  document.body.appendChild(loader);
+  return loader;
+};
+const showLoader = cid => {
+  const el = loaderEl();
+  let name = '';
+  try { name = perfMods.channels?.getChannel?.(cid)?.name ?? ''; } catch { }
+  const span = el.querySelector('span');
+  span.textContent = 'Loading ';
+  const b = document.createElement('b');
+  b.textContent = name ? (/^\d/.test(name) ? name : '#' + name) : 'channel';
+  span.append(b, '…');
+  el.classList.add('on');
+};
+const hideLoader = () => { clearTimeout(loaderTimer); loader?.classList.remove('on'); };
 
 // Channel switch timing: from clicking a channel to its first message being on screen. Shown in asar settings.
 diag.switches = [];
@@ -494,14 +563,22 @@ document.addEventListener('click', e => {
   if (!warm) prefetched.set(cid, Date.now());
   const t0 = performance.now();
   const sel = 'li[id^="chat-messages-' + cid + '-"]';
+  const gid = /^\/channels\/(@me|\d+)\//.exec(a.getAttribute('href'))?.[1];
+  try { DiscordNative.ipc.send('DISCORD_UPDATED_QUOTES', { asarVisit: { c: cid, g: gid } }); } catch { }
+
+  hideLoader();
+  if (cfg.loader) loaderTimer = setTimeout(() => { if (!document.querySelector(sel)) showLoader(cid); }, 120);
+  const mine = loaderTimer;
   const poll = () => {
     const ms = performance.now() - t0;
     if (document.querySelector(sel)) {
+      if (loaderTimer === mine) hideLoader();
       diag.switches.push({ ms: Math.round(ms), warm });
       if (diag.switches.length > 30) diag.switches.shift();
       return report();
     }
     if (ms < 10000) setTimeout(poll, 40);
+    else if (loaderTimer === mine) hideLoader(); // empty channel or something else: never leave the pill up
   };
   setTimeout(poll, 0);
 }, { capture: true, passive: true });

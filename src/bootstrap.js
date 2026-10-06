@@ -57,6 +57,15 @@ const recordLaunch = () => {
   } catch { }
 };
 
+// Most-used channels (visit count, decayed by how long ago), for "keep top channels ready"
+const topChannels = () => {
+  const v = settings.get('asarVisits', {});
+  const now = Date.now();
+  return Object.entries(v && typeof v === 'object' ? v : {})
+    .map(([ c, e ]) => ({ c, g: e.g, s: e.n / (1 + (now - e.t) / 86400000) }))
+    .sort((a, b) => b.s - a.s).slice(0, 30).map(({ c, g }) => ({ c, g }));
+};
+
 const launchStats = () => {
   const list = settings.get('asarStats', []);
   if (!Array.isArray(list) || !list.length) return null;
@@ -95,7 +104,7 @@ const saveFreezes = () => {
 const riskyOn = () => {
   const preset = require('./cmdSwitches').presetName();
   // Anything asar changes that could slow Discord down: flags, priority, page changes, the user's own CSS/JS
-  return preset === 'gpu' || oaConfig.priority === true || oaConfig.prefetch !== false || oaConfig.pickerTune !== false || oaConfig.domOptimizer === true || !!(oaConfig.customFlags ?? '').trim()
+  return preset === 'gpu' || oaConfig.priority === true || oaConfig.prefetch !== false || oaConfig.keepReady !== false || oaConfig.pickerTune !== false || oaConfig.domOptimizer === true || !!(oaConfig.customFlags ?? '').trim()
     || oaConfig.instantUI !== false || oaConfig.noBlur !== false || !!(oaConfig.css ?? '').trim() || !!(oaConfig.js ?? '').trim();
 };
 
@@ -256,6 +265,9 @@ const startCore = () => {
     noBlur: oaConfig.noBlur !== false && !pure && !oaConfig.safeMode,
     pure,
     prefetch: oaConfig.prefetch !== false && !pure && !oaConfig.safeMode,
+    keepReady: oaConfig.keepReady !== false && !pure && !oaConfig.safeMode,
+    loader: oaConfig.loader !== false && !pure,
+    top: topChannels(),
     hotkey: hotkeyLabel,
     stats: launchStats()
   }));
