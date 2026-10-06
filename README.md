@@ -1,3 +1,3 @@
 # asar build
 
-Latest app.asar, built from 876876d. See the main branch for source.
+Latest app.asar, built from dd8431d. See the main branch for source.
