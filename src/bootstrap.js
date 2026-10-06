@@ -27,6 +27,7 @@ const moduleUpdater = require('./updater/moduleUpdater');
 const autoStart = require('./autoStart');
 
 const env = k => process.env['ASAR_' + k] ?? process.env['OPENASAR_' + k];
+const debug = require('./debug');
 
 let desktopCore, mainWindow;
 
@@ -115,6 +116,7 @@ const enterSafeMode = reason => {
   settings.set('asar', c);
   settings.save();
   log('Watchdog', 'Safe mode on:', reason);
+  debug.ev('safe-mode', { reason });
 
   const { Notification } = require('electron');
   if (Notification.isSupported()) new Notification({
@@ -132,6 +134,7 @@ const recordFreeze = (kind, ms, extra) => {
   }
   const ev = { at: new Date().toISOString(), kind, ms, preset: require('./cmdSwitches').presetName(), ...extra };
   freezes.events.push(ev);
+  debug.ev('freeze', { kind, ms, ...extra });
   if (kind !== 'gpu') { freezes.count++; freezes.longest = Math.max(freezes.longest, ms); }
   if (kind === 'gpu') freezes.gpu++;
   log('Watchdog', kind, ms ? ms + 'ms' : '', extra ?? '');
@@ -149,9 +152,11 @@ const watchMainLoop = () => {
     const now = Date.now();
     const lag = now - last - 500;
     last = now;
+    if (lag > (global.asarLagMax ?? 0)) global.asarLagMax = lag; // worst lag per debug sample
     if (lag < 1000) return;
     mainStalls.count++;
     mainStalls.longest = Math.max(mainStalls.longest, lag);
+    debug.ev('stall', { ms: lag });
     freezes.events.push({ at: new Date().toISOString(), kind: 'main', ms: lag });
     log('Watchdog', 'main process stalled', lag + 'ms');
     saveFreezes();
@@ -183,7 +188,7 @@ const watchWindow = bw => {
 // the stream actually starts) are never cached.
 const picker = global.asarPicker = { calls: 0, captures: 0, totalMs: 0, requested: null, used: null };
 const tuneScreenPicker = () => {
-  if (oaConfig.pickerTune === false || pure || oaConfig.safeMode) return;
+  const tune = oaConfig.pickerTune !== false && !pure && !oaConfig.safeMode; // otherwise only measured (for debug logs)
   try {
     const { desktopCapturer } = require('electron');
     const orig = desktopCapturer.getSources.bind(desktopCapturer);
@@ -195,29 +200,32 @@ const tuneScreenPicker = () => {
       const o = { ...opts };
       const ts = o.thumbnailSize;
       picker.requested = ts ? ts.width + 'x' + ts.height : 'default (150x150)';
-      if (ts && ts.width > 0 && ts.height > 0 && (ts.width > MAX_W || ts.height > MAX_H)) {
+      if (tune && ts && ts.width > 0 && ts.height > 0 && (ts.width > MAX_W || ts.height > MAX_H)) {
         const s = Math.min(MAX_W / ts.width, MAX_H / ts.height);
         o.thumbnailSize = { width: Math.max(1, Math.round(ts.width * s)), height: Math.max(1, Math.round(ts.height * s)) };
       }
       picker.used = o.thumbnailSize ? o.thumbnailSize.width + 'x' + o.thumbnailSize.height : picker.requested;
+      const note = { asked: picker.requested, made: picker.used, types: Array.isArray(o.types) ? o.types.join('+') : undefined };
 
       const key = JSON.stringify(o);
       const thumbs = !(o.thumbnailSize && (o.thumbnailSize.width === 0 || o.thumbnailSize.height === 0));
-      if (thumbs && cache && cache.key === key && Date.now() - cache.at < 1500) return Promise.resolve(cache.res);
-      if (inflight && inflight.key === key) return inflight.p;
+      if (tune && thumbs && cache && cache.key === key && Date.now() - cache.at < 1500) { debug.ev('picker', { ...note, ms: 0, sources: cache.res?.length, cached: true }); return Promise.resolve(cache.res); }
+      if (tune && inflight && inflight.key === key) { debug.ev('picker', { ...note, shared: true }); return inflight.p; }
 
       const t = Date.now();
       picker.captures++;
       const p = orig(o).then(res => {
         picker.totalMs += Date.now() - t;
-        if (thumbs) cache = { key, at: Date.now(), res };
+        debug.ev('picker', { ...note, ms: Date.now() - t, sources: res?.length });
+        if (tune && thumbs) cache = { key, at: Date.now(), res };
         if (inflight?.p === p) inflight = null;
         return res;
       }, e => {
+        debug.ev('picker', { ...note, ms: Date.now() - t, failed: String(e?.message ?? e).slice(0, 80) });
         if (inflight?.p === p) inflight = null;
         throw e;
       });
-      inflight = { key, p };
+      if (tune) inflight = { key, p };
       return p;
     };
   } catch (e) { log('Picker', e); }
@@ -272,8 +280,9 @@ const startCore = () => {
     memTrim: oaConfig.memTrim !== false && !pure && !oaConfig.safeMode,
     top: topChannels(),
     hotkey: hotkeyLabel,
-    stats: launchStats()
-  }));
+    stats: launchStats(),
+    debug: debug.isOn() ? { salt: debug.salt() } : null
+  })) + '\n//# sourceURL=asar-injected.js'; // named, so slow frames and errors from asar's code can be told apart from Discord's
 
   let firstReady = true;
   app.on('browser-window-created', (e, bw) => {
@@ -283,7 +292,10 @@ const startCore = () => {
 
       if (firstReady) {
         firstReady = false;
+        asarMark('Discord page DOM ready');
         watchWindow(bw);
+        debug.watch(bw);
+        debug.windowReady();
         warmConnections();
         bw.on('focus', warmConnections);
         recordLaunch();
@@ -294,7 +306,7 @@ const startCore = () => {
 
       bw.webContents.executeJavaScript(injected()).catch(e => log('Inject', e));
       if (!pure && !oaConfig.safeMode && oaConfig.css) bw.webContents.insertCSS(oaConfig.css).catch(e => log('Inject', 'Custom CSS', e));
-      if (!pure && !oaConfig.safeMode && oaConfig.js) bw.webContents.executeJavaScript(oaConfig.js).catch(e => log('Inject', 'Custom JS', e));
+      if (!pure && !oaConfig.safeMode && oaConfig.js) bw.webContents.executeJavaScript(oaConfig.js + '\n//# sourceURL=asar-custom.js').catch(e => log('Inject', 'Custom JS', e));
     });
 
     // Hotkey that always opens asar settings, even if Discord changes its settings UI again
@@ -306,7 +318,9 @@ const startCore = () => {
   });
 
   tuneScreenPicker(); // before Discord's core loads, so it uses the tuned version
+  asarMark('loading Discord core');
   desktopCore = require('discord_desktop_core');
+  asarMark('Discord core loaded');
 
   const stub = () => new Proxy({}, {
     get: (target, prop) => target[prop] ??= () => { }
@@ -343,9 +357,11 @@ const startCore = () => {
       }
     })
   });
+  asarMark('Discord core started');
 };
 
 const startUpdate = () => {
+  asarMark('app ready');
   // Tracking / typing requests are blocked inside Discord's page (mainWindow.js), not with a network hook.
   watchMainLoop();
 
@@ -364,6 +380,7 @@ const startUpdate = () => {
   }
 
   splash.events.once('APP_SHOULD_LAUNCH', () => {
+    asarMark('updates checked');
     if (!env('NOSTART')) startCore();
   });
 
@@ -371,6 +388,7 @@ const startUpdate = () => {
   splash.events.once('APP_SHOULD_SHOW', () => {
     if (done) return;
     done = true;
+    asarMark('Discord window shown');
 
     desktopCore.setMainWindowVisible(!startMin);
 
@@ -382,6 +400,7 @@ const startUpdate = () => {
 
       if (oaConfig.autoupdate !== false) require('./asarUpdate')().then(r => {
         log('AsarUpdate', r);
+        debug.ev('update', { result: r });
         if (!/^Updated/.test(r)) return;
 
         const { Notification } = require('electron');
@@ -406,6 +425,10 @@ module.exports = () => {
   });
 
   if (!app.requestSingleInstanceLock() && !(process.argv?.includes?.('--multi-instance') || oaConfig.multiInstance === true)) return app.quit();
+
+  // Debug recording (asar settings > Debug): from the very start if asked, and recovery of an unfinished one
+  if (oaConfig.debugOnStart === true) debug.start('launch');
+  debug.init();
 
   app.whenReady().then(startUpdate);
 };

@@ -1,6 +1,12 @@
 const { join } = require('path');
 
-global.asarVersion = '1.9.0';
+// Startup marks for debug logs (asar settings > Debug): a name and a time for each step of starting Discord
+global.asarT0 = Date.now() - Math.round(process.uptime() * 1000); // when Discord's process started
+global.asarMarks = [];
+global.asarMark = n => { if (!asarMarks.some(m => m[0] === n)) asarMarks.push([ n, Date.now() ]); };
+asarMark('asar loaded');
+
+global.asarVersion = '1.10.0';
 global.oaVersion = global.asarVersion; // Kept for compatibility with mods that read it
 
 global.log = (area, ...args) => console.log(`[\x1b[38;2;139;123;255masar\x1b[0m > ${area}]`, ...args);
@@ -69,6 +75,7 @@ if (oaConfig.compileCache !== false && oaConfig.pure !== true) try {
 } catch (e) { log('Init', 'Compile cache unavailable', e?.message); }
 
 require('./cmdSwitches')();
+asarMark('settings read, flags applied');
 
 // Force u2QuickLoad (pre-"minified" ish)
 const b = join(paths.getExeDir(), 'modules'); // Base dir

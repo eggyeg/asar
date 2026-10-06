@@ -1,9 +1,11 @@
-const { ipcMain, app, shell } = require('electron');
+const { ipcMain, app, shell, clipboard } = require('electron');
 const { join, dirname } = require('path');
+const debug = require('../debug');
 
 const self = join(__dirname, '..'); // The app.asar we're running from
 
 const restart = () => {
+  debug.finishNow('Discord was restarted from asar settings');
   app.relaunch();
   app.exit(0);
 };
@@ -28,6 +30,14 @@ ipcMain.on('DISCORD_UPDATED_QUOTES', (e, c) => {
   if (c === 'o') return exports.open();
 
   if (c && typeof c === 'object' && typeof c.asarFreeze === 'number') return global.asarRecordFreeze?.('page', c.asarFreeze);
+
+  // Debug recorder: a batch of page events (only sent while recording), and startup marks from the page
+  if (c && typeof c === 'object' && Array.isArray(c.asarDbg)) return debug.page(c.asarDbg);
+  if (c && typeof c === 'object' && Array.isArray(c.asarMark)) {
+    const [ n, t ] = c.asarMark;
+    if (typeof n === 'string' && n.length < 60 && typeof t === 'number' && !asarMarks.some(m => m[0] === n)) asarMarks.push([ n, t ]);
+    return;
+  }
 
   // Channel visit (for "keep top channels ready"): IDs only, kept to the 150 most recent, saved at most every 10 s
   if (c && typeof c === 'object' && c.asarVisit) {
@@ -57,7 +67,31 @@ ipcMain.on('cs', (e, c) => {
   if (!c || typeof c !== 'object') return;
   // Keep fields set by the main process (safe mode, migrations) unless the window changes them explicitly
   for (const k of [ 'safeMode', 'safeModeReason', 'safeModeAt', 'configVersion' ]) if (!(k in c) && k in oaConfig) c[k] = oaConfig[k];
+  if (debug.isOn()) {
+    const changed = [ ...new Set([ ...Object.keys(c), ...Object.keys(oaConfig) ]) ].filter(k => JSON.stringify(c[k]) !== JSON.stringify(oaConfig[k]))
+      .map(k => [ 'css', 'js', 'customFlags', 'updateUrl' ].includes(k) ? k + ' (edited)' : k + '=' + JSON.stringify(c[k] ?? null)).join(', ');
+    if (changed) debug.ev('config', { changed: changed.slice(0, 300) });
+  }
   save(c);
+});
+
+// Debug tab
+ipcMain.on('dg', e => { e.returnValue = debug.status(); });
+ipcMain.handle('ds', () => debug.start('button'));
+ipcMain.handle('dx', () => debug.stop());
+ipcMain.handle('dn', () => debug.snapshot());
+ipcMain.handle('dt', (e, since) => debug.tail(Number(since) || 0));
+ipcMain.handle('dw', (e, on) => { save({ ...oaConfig, debugOnStart: on === true }); return debug.status(); });
+ipcMain.handle('do', (e, name) => { // open a saved log, or the folder
+  if (name == null) { require('fs').mkdirSync(debug.dir(), { recursive: true }); return shell.openPath(debug.dir()); }
+  if (debug.validName(name)) return shell.openPath(join(debug.dir(), name));
+});
+ipcMain.handle('dr', (e, name) => { if (debug.validName(name)) shell.showItemInFolder(join(debug.dir(), name)); });
+ipcMain.handle('dy', (e, name) => {
+  const t = debug.validName(name) && debug.summaryOf(name);
+  if (!t) return false;
+  clipboard.writeText(t);
+  return true;
 });
 ipcMain.on('cr', () => { settings.save(); restart(); });
 ipcMain.on('cc', () => win?.close());

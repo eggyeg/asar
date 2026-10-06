@@ -9,6 +9,83 @@ const open = () => DiscordNative.ipc.send('DISCORD_UPDATED_QUOTES', 'o');
 window.asar = { version: cfg.version, open };
 window.openasar = window.openasar ?? {};
 
+// --- Debug recorder core (the recorder itself is at the end of this file) ---
+// D() records one event while a recording is on (asar settings > Debug) and does nothing otherwise.
+const dbg = { on: false, q: [], salt: 1, dropped: 0, off: [], flux: new Map(), errs: new Map(), net: {}, memN: 0 };
+const epoch = () => Math.round(performance.timeOrigin + performance.now());
+const D = (k, f) => {
+  if (!dbg.on) return;
+  if (dbg.q.length >= 4000) { dbg.q.shift(); dbg.dropped++; }
+  dbg.q.push({ t: epoch(), k, ...f });
+};
+// Server/channel IDs -> short codes salted per recording: the same channel gets the same code within one log, and the
+// code can't be turned back into the ID
+const anon = (id, p = 'c') => {
+  if (id == null || id === '') return undefined;
+  if (id === '@me') return 'DMs';
+  let x = 0x811c9dc5 ^ dbg.salt;
+  for (const ch of String(id)) x = Math.imul(x ^ ch.charCodeAt(0), 16777619);
+  return p + ':' + (x >>> 0).toString(16).padStart(8, '0').slice(0, 6);
+};
+// A web address -> what kind of request it is, plus its path with IDs, hashes and file names removed
+const redactUrl = s => {
+  let u;
+  try { u = new URL(String(s), location.href); } catch { return { kind: 'unknown', path: '?' }; }
+  if (u.protocol === 'data:' || u.protocol === 'blob:') return { kind: 'local', path: u.protocol };
+  const h = u.host;
+  let kind;
+  if (h === 'cdn.discordapp.com') kind = 'cdn';
+  else if (/(^|\.)discord(app)?\.com$/.test(h)) kind = u.pathname.startsWith('/api/') ? 'api' : u.pathname.startsWith('/assets/') ? 'app code' : 'discord';
+  else if (h === 'media.discordapp.net') kind = 'media';
+  else if (/^images-ext-\d+\.discordapp\.net$/.test(h)) return { kind: 'link previews', path: h + '/external/…' };
+  else if (/\.discord\.media$/.test(h)) return { kind: 'voice', path: 'voice server' };
+  else if (/(^|\.)discord\.gg$/.test(h)) kind = 'gateway';
+  else if (/(^|\.)discordapp\.net$/.test(h)) kind = 'discord';
+  else return { kind: 'other sites', path: 'other site' };
+  if (u.pathname.includes('/external/')) return { kind, path: h + '/external/…' };
+  let prev = '';
+  const path = u.pathname.split('/').map(seg => {
+    const p = prev;
+    prev = seg;
+    if (!seg) return seg;
+    if (/^\d+$/.test(seg)) return ':id';
+    if (/^(invites?|templates?|gifts?|gift-codes|guild-template)$/.test(p)) return ':x'; // invite/gift codes
+    if (seg === '@me' || /^v\d{1,2}$/.test(seg) || /^[a-z][a-z_-]{0,23}$/.test(seg)) return seg;
+    const ext = /\.([a-z0-9]{2,5})$/i.exec(seg)?.[1];
+    if (ext) return kind === 'app code' ? seg.slice(0, 60) : '*.' + ext.toLowerCase();
+    return ':x';
+  }).join('/');
+  return { kind, path: h + path };
+};
+// Free text (error messages) with anything personal taken out
+const scrub = s => String(s ?? '').slice(0, 500)
+  .replace(/\b(?:https?|wss?|file):\/\/[^\s'"`)]+/g, m => redactUrl(m).path)
+  .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '<email>')
+  .replace(/\b(?:mfa\.[\w-]{20,}|[\w-]{23,28}\.[\w-]{6,7}\.[\w-]{25,})\b/g, '<token>')
+  .replace(/\b\d{15,21}\b/g, '<id>')
+  .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '<ip>')
+  .replace(/(["'`])([^"'`\n]{40,})\1/g, '$1…$1')
+  .slice(0, 300);
+// Whose code a script is (for "is it asar, Discord, or another mod")
+const ownerOf = url => {
+  const u = String(url || '');
+  if (!u) return 'unknown';
+  if (u.includes('asar-injected')) return 'asar';
+  if (u.includes('asar-custom')) return 'your custom JS';
+  if (/betterdiscord|bdapi|\.plugin\.js/i.test(u)) return 'BetterDiscord';
+  if (/vencord|equicord/i.test(u)) return 'Vencord';
+  if (/replugged|powercord|shelter|goosemod|kernel/i.test(u)) return 'other mod';
+  if (/^https:\/\/([\w-]+\.)?discord(app)?\.com\//.test(u)) return 'Discord';
+  return 'other';
+};
+const scriptName = url => {
+  const u = String(url || '');
+  if (!u) return '(no file)';
+  const o = ownerOf(u);
+  if (o === 'other') return redactUrl(u).path;
+  return u.split(/[\\/]/).pop().split('?')[0].slice(0, 60);
+};
+
 // --- Disable Sentry (v7 hub + v8 scopes) ---
 if (cfg.noTrack) {
   try {
@@ -130,7 +207,7 @@ const report = () => {
   lastReport = s;
   try { DiscordNative.ipc.send('DISCORD_UPDATED_QUOTES', { asarDiag: diag }); } catch { }
 };
-const fail = (where, e) => { diag.error = where + ': ' + (e?.message ?? e); report(); };
+const fail = (where, e) => { diag.error = where + ': ' + (e?.message ?? e); D('error', { who: 'asar', msg: scrub(diag.error), at: 'asar (' + where + ')' }); report(); };
 
 let wreq, root, types, React, patched = false;
 const scanned = new Set();
@@ -478,9 +555,14 @@ const prefetch = (cid, kind = 'hover') => {
     lastPrefetch = Date.now();
     diag.prefetch.sent++;
     if (kind === 'kept') diag.prefetch.kept = (diag.prefetch.kept ?? 0) + 1;
+    const t0 = performance.now();
     const r = perfMods.actions.fetchMessages({ channelId: cid, limit: 50 });
+    if (dbg.on) {
+      const done = failed => D('preload', { c: anon(cid), ty: chType(cid), why: kind, ms: Math.round(performance.now() - t0), failed: failed || undefined });
+      if (r?.then) r.then(() => done(false), () => done(true)); else done(false);
+    }
     if (r?.catch) r.catch(() => { diag.prefetch.failed++; });
-  } catch { diag.prefetch.failed++; }
+  } catch { diag.prefetch.failed++; D('preload', { c: anon(cid), why: kind, failed: true }); }
 };
 
 // --- Keep your top channels ready ---
@@ -648,28 +730,87 @@ const statusHTML = kind => {
 };
 let pendingDM = null;
 
-// Where the messages are drawn: Discord's chat <main>; fallback: everything right of the channel list, below the header
-const chatRect = () => {
+// Where the messages are drawn: Discord's chat <main> (message list + message box).
+const realChatBox = () => {
   const list = document.querySelector('ol[data-list-id="chat-messages"]');
   const box = list?.closest('main') ?? document.querySelector('main[class*="chatContent"]') ?? document.querySelector('[class*="chatContent"]');
   const b = box?.getBoundingClientRect();
-  if (b && b.width > 200 && b.height > 150) return b;
-  const nav = document.querySelector('a[href^="/channels/"]')?.closest('nav')?.getBoundingClientRect();
-  if (!nav) return null;
-  return { left: nav.right, top: nav.top + 48, width: innerWidth - nav.right, height: innerHeight - nav.top - 48 };
+  return b && b.width > 200 && b.height > 150 ? b : null;
 };
 
+// No chat on screen yet (Friends page, Discover, the first chat after Discord starts): estimate where it will be.
+// 1.9 guessed "top of the channel list + 48 px", which lands too low when the list starts below a search bar.
+// Now: the last real chat box if the window is the same size, else the page right of the channel list (found by
+// walking up from the element under it) minus that page's header bar.
+let lastBox = null, lastLink = null;
+const guessBox = () => {
+  if (lastBox && lastBox.w === innerWidth && lastBox.h === innerHeight) return lastBox.r;
+  const nav = (lastLink?.isConnected ? lastLink : document.querySelector('a[href^="/channels/"]'))?.closest('nav')?.getBoundingClientRect();
+  if (!nav || nav.right >= innerWidth - 200) return null;
+  const x = Math.min(innerWidth - 2, Math.round(nav.right + 24));
+  let page = null;
+  for (let el = document.elementFromPoint(x, Math.round(innerHeight / 2)), i = 0; el && el !== document.body && i < 30; el = el.parentElement, i++) {
+    const r = el.getBoundingClientRect();
+    if (Math.abs(r.left - nav.right) <= 3 && r.width > 200 && r.height > 150) page = r;
+    else if (page) break;
+  }
+  if (!page) page = { left: nav.right, top: nav.top, width: innerWidth - nav.right, height: innerHeight - nav.top };
+  // The page's header: the widest short element sitting on the page's top edge
+  let head = 0;
+  for (let el = document.elementFromPoint(x, Math.round(page.top + 3)), i = 0; el && el !== document.body && i < 30; el = el.parentElement, i++) {
+    const r = el.getBoundingClientRect();
+    if (r.height >= 100 || r.left < page.left - 3) break;
+    if (Math.abs(r.top - page.top) <= 3 && r.width >= page.width * 0.5) head = Math.max(head, r.height);
+  }
+  if (head < 24) head = 48;
+  return { left: page.left, top: page.top + head, width: page.width, height: page.height - head };
+};
+const chatRect = () => {
+  const real = realChatBox();
+  if (real) {
+    lastBox = { w: innerWidth, h: innerHeight, r: { left: real.left, top: real.top, width: real.width, height: real.height } };
+    return { b: real, real: true };
+  }
+  const g = guessBox();
+  return g && { b: g, real: false };
+};
+
+// The loading screen and progress line follow Discord's chat box while they're up: re-measured every 100 ms, so if
+// Discord creates or moves the chat box (first chat, DM with a profile panel), they snap onto it.
+let placed = '', placedReal = false, barOn = false, trackT = 0;
+const px = b => [ b.left, b.top, b.width, b.height ].map(Math.round);
 const placeLoad = () => {
-  const b = loadEl && chatRect();
-  if (!b) return false;
-  Object.assign(loadEl.style, { left: b.left + 'px', top: b.top + 'px', width: b.width + 'px', height: b.height + 'px' });
+  const r = loadEl && chatRect();
+  if (!r) return false;
+  const [ l, t, w, h ] = px(r.b), key = l + ',' + t + ',' + w + ',' + h;
+  if (key !== placed) {
+    if (placed && loadFor && loadFor !== 'settings') D('loader', { ev: r.real && !placedReal ? 'snapped onto chat' : 'moved', to: key, from: placed });
+    Object.assign(loadEl.style, { left: l + 'px', top: t + 'px', width: w + 'px', height: h + 'px' });
+    placed = key;
+  }
+  placedReal = r.real;
   return true;
+};
+const retrack = fast => {
+  if (trackT > 0) clearTimeout(trackT); else if (trackT < 0) cancelAnimationFrame(-trackT);
+  trackT = fast ? -requestAnimationFrame(track) : setTimeout(track, 100);
+};
+const track = () => { // every frame while the position is only an estimate, then every 100 ms
+  trackT = 0;
+  const loading = loadFor && loadFor !== 'settings';
+  if (!loading && !barOn) return;
+  if (loading) placeLoad();
+  if (barOn) placeBar();
+  trackT = loading && !placedReal ? -requestAnimationFrame(track) : setTimeout(track, 100);
 };
 const showLoad = (cid, now = false) => {
   if (loadFor === cid && loadEl?.classList.contains('on')) return;
   buildLoad(cid);
+  placed = '';
   if (!placeLoad()) return;
   loadFor = cid;
+  D('loader', { ev: 'shown', c: anon(cid), at: placedReal ? 'chat box' : 'estimated', box: placed });
+  retrack(!placedReal);
   if (!now) return requestAnimationFrame(() => loadEl?.classList.add('on'));
   // Instant: visible in the very next frame (no fade-in), so it's on screen before Discord starts building the channel
   loadEl.style.transition = 'none';
@@ -693,14 +834,28 @@ const showBar = () => {
     barEl.innerHTML = '<i></i>';
     document.body.appendChild(barEl);
   }
-  const b = chatRect();
-  if (!b) return;
-  Object.assign(barEl.style, { display: 'block', left: b.left + 'px', top: b.top + 'px', width: b.width + 'px' });
+  barOn = true;
+  barEl.style.display = 'block';
+  if (!placeBar()) { barEl.style.display = 'none'; barOn = false; return; }
+  if (!trackT) retrack(false);
 };
-const hideBar = () => { if (barEl) barEl.style.display = 'none'; };
+let barKey = '';
+const placeBar = () => {
+  const r = chatRect();
+  if (!r) return false;
+  const [ l, t, w ] = px(r.b), key = l + ',' + t + ',' + w;
+  if (key !== barKey) { Object.assign(barEl.style, { left: l + 'px', top: t + 'px', width: w + 'px' }); barKey = key; }
+  return true;
+};
+const hideBar = () => { barOn = false; if (barEl) barEl.style.display = 'none'; };
 
-const hideLoad = () => { loadFor = null; loadEl?.classList.remove('on'); hideBar(); };
-addEventListener('resize', () => { if (loadFor) placeLoad(); }, { passive: true });
+const hideLoad = () => {
+  if (loadFor && loadFor !== 'settings' && loadEl?.classList.contains('on')) D('loader', { ev: 'hidden' });
+  loadFor = null;
+  loadEl?.classList.remove('on');
+  hideBar();
+};
+addEventListener('resize', () => { if (loadFor && loadFor !== 'settings') placeLoad(); if (barOn) placeBar(); }, { passive: true });
 
 // Discord already has this channel's messages (so opening it needs no download)
 const inStore = cid => {
@@ -727,9 +882,9 @@ try {
     while (loafs.length > 60) loafs.shift();
   }).observe({ type: 'long-animation-frame', buffered: false });
 } catch { }
-const frameCost = t0 => {
+const frameCost = (t0, t1 = Infinity) => {
   let js = 0, draw = 0;
-  for (const f of loafs) if (f.end >= t0) { js += f.script; draw += f.draw; }
+  for (const f of loafs) if (f.end >= t0 && f.start <= t1) { js += f.script; draw += f.draw; }
   return js || draw ? { js: Math.round(js), draw: Math.round(draw) } : {};
 };
 
@@ -738,25 +893,42 @@ const frameCost = t0 => {
 diag.switches = [];
 let navId = 0;
 const cidFromPath = p => /^\/channels\/(?:@me|\d+)\/(\d+)/.exec(p)?.[1];
-const startNav = (cid, warm) => {
+const chType = cid => {
+  try {
+    const t = perfMods.channels?.getChannel?.(cid)?.type;
+    return { 0: 'text channel', 1: 'DM', 3: 'group DM', 5: 'announcements', 10: 'thread', 11: 'thread', 12: 'private thread', 15: 'forum', 16: 'media channel', 2: 'voice channel', 13: 'stage' }[t] ?? (t == null ? undefined : 'type ' + t);
+  } catch { }
+};
+const startNav = (cid, warm, how = 'click') => {
   const id = ++navId;
   hideLoad();
-  const t0 = performance.now();
+  const t0 = performance.now(), stored = inStore(cid), merged = mergedClicks;
+  mergedClicks = 0;
   const showAt = setTimeout(() => { if (id === navId && cfg.loader && !isReady(cid) && !inStore(cid)) showLoad(cid); }, 120);
   const poll = () => {
     if (id !== navId) return clearTimeout(showAt); // another navigation took over
     const ms = performance.now() - t0;
     if (isReady(cid)) {
       clearTimeout(showAt);
+      const loader = loadFor === cid, t1 = performance.now();
       // let the first frame of messages paint before fading out; Discord's own selection is in place by now
       requestAnimationFrame(() => requestAnimationFrame(() => { if (id === navId) { hideLoad(); clearSelection(); } }));
-      const cost = frameCost(t0);
-      diag.switches.push({ ms: Math.round(ms), warm, ...cost });
-      if (diag.switches.length > 30) diag.switches.shift();
-      return report();
+      const msgs = dbg.on ? document.querySelectorAll('li[id^="chat-messages-' + cid + '-"]').length : 0;
+      // Chromium reports frame timings a moment after the frame: read the cost once they're in
+      setTimeout(() => {
+        const cost = frameCost(t0, t1 + 50);
+        diag.switches.push({ ms: Math.round(ms), warm, ...cost });
+        if (diag.switches.length > 30) diag.switches.shift();
+        D('switch', { c: anon(cid), ty: chType(cid), ms: Math.round(ms), warm, stored, ...cost, loader, how, merged: merged || undefined, msgs: msgs || undefined, t: Math.round(performance.timeOrigin + t0) });
+        report();
+      }, 300);
+      return;
     }
     if (ms < 8000) setTimeout(poll, 40);
-    else { hideLoad(); clearSelection(); } // never leave anything up
+    else { // never leave anything up
+      D('switch', { c: anon(cid), ty: chType(cid), ms: Math.round(ms), warm, stored, timeout: true, how, t: Math.round(performance.timeOrigin + t0) });
+      hideLoad(); clearSelection();
+    }
   };
   setTimeout(poll, 0);
 };
@@ -768,6 +940,7 @@ document.addEventListener('click', e => {
   const cid = a && channelIdOf(a);
   if (cid) {
     clearTimeout(hoverTimer); // the click loads it now; a hover preload would only duplicate that
+    lastLink = a;
     const warm = prefetched.has(cid);
     if (!warm) prefetched.set(cid, Date.now());
     const gid = /^\/channels\/(@me|\d+)\//.exec(a.getAttribute('href'))?.[1];
@@ -780,7 +953,7 @@ document.addEventListener('click', e => {
   for (const t of [ 40, 140, 320 ]) setTimeout(() => {
     if (navId !== id || location.pathname === before) return;
     const c = cidFromPath(location.pathname);
-    if (c && c !== cidFromPath(before)) startNav(c, prefetched.has(c));
+    if (c && c !== cidFromPath(before)) startNav(c, prefetched.has(c), 'other click');
   }, t);
 }, { capture: true, passive: true });
 addEventListener('keydown', e => { if (e.key === 'Escape') hideLoad(); }, { capture: true, passive: true });
@@ -791,12 +964,13 @@ addEventListener('keydown', e => { if (e.key === 'Escape') hideLoad(); }, { capt
 // (or the progress line if Discord already has the messages), lets that reach the screen (one frame), then hands
 // the click to Discord. If you click again before that, only the newest click is handed on, so Discord never builds
 // channels you've already left. While you're switching quickly, asar waits a little longer to collect clicks.
-let pending = null, lastSwitchClick = 0;
+let pending = null, lastSwitchClick = 0, mergedClicks = 0;
 const cancelPending = () => {
   if (!pending) return;
   cancelAnimationFrame(pending.raf);
   clearTimeout(pending.timer);
   pending = null;
+  mergedClicks++; // a click that never reached Discord because a newer one replaced it
 };
 
 // Move the sidebar selection the instant you click, in Discord's own style: the background and text colours of the
@@ -870,6 +1044,7 @@ if (cfg.instantSwitch) document.addEventListener('click', e => {
   lastSwitchClick = now;
 
   pendingDM = a.getAttribute('href').startsWith('/channels/@me/') ? cid : null;
+  lastLink = a;
   try {
     showBar(); // also loads the .asar-pending style
     moveSelection(a);
@@ -910,6 +1085,7 @@ if (cfg.memTrim) {
       diag.mem.trims++;
       diag.mem.freedMB = Math.round(diag.mem.freedMB + freed);
       diag.mem.lastMB = Math.round(freed);
+      D('mem-trim', { freedMB: Math.round(freed), heapMB: Math.round(heapMB()) });
       report();
     }, 8000);
   }, 30000);
@@ -926,9 +1102,10 @@ addEventListener('pointerdown', e => { if (e.isTrusted) lastInputAt = performanc
 addEventListener('keydown', e => { if (e.isTrusted) lastInputAt = performance.now(); }, { capture: true, passive: true });
 
 diag.settingsOpen = [];
-let settingsT0 = 0;
+let settingsT0 = 0, settingsT0Used = false;
 const settingsBuilt = () => {
   const t0 = settingsT0 || (performance.now() - lastInputAt < 3000 ? lastInputAt : 0);
+  settingsT0Used = !!settingsT0;
   settingsT0 = 0;
   if (!t0) return;
   const poll = () => {
@@ -936,6 +1113,7 @@ const settingsBuilt = () => {
     if (document.querySelector('[data-asar-icon]')) {
       hideSettingsLoad();
       diag.settingsOpen.push({ ms: Math.round(ms), first: diag.settingsOpen.length === 0 });
+      D('settings', { ms: Math.round(ms), first: diag.settingsOpen.length === 1, instant: !!settingsT0Used, t: Math.round(performance.timeOrigin + t0) });
       if (diag.settingsOpen.length > 10) diag.settingsOpen.shift();
       return report();
     }
@@ -1012,7 +1190,7 @@ const warmSettings = () => {
   report();
   let i = 0;
   const next = () => {
-    if (i >= list.length || typeof r.e !== 'function') return report();
+    if (i >= list.length || typeof r.e !== 'function') { D('settings-prep', diag.settingsWarm); return report(); }
     const c = list[i++];
     Promise.resolve().then(() => r.e(c)).then(() => { diag.settingsWarm.loaded++; }, () => { }).then(() => setTimeout(next, 150));
   };
@@ -1028,6 +1206,269 @@ document.addEventListener('click', e => {
   const row = icon.closest('[role="tab"],[role="button"],[role="menuitem"],[role="link"],a,li,[class*="item"]') ?? icon.parentElement;
   if (row?.contains(e.target)) open();
 }, true);
+
+// --- Debug recorder (asar settings > Debug) ---
+// Installed only while a recording is on and removed when it stops. Page events go to asar's main process in one
+// message every 2 s. Only timings, counts and kinds of things are recorded: no names, messages, links or account
+// details are read, IDs are replaced by anon() codes and error texts go through scrub().
+const routeKind = () => {
+  const p = location.pathname;
+  if (p === '/channels/@me') return 'Friends / DM home';
+  if (/^\/channels\/@me\/\d+/.test(p)) return 'DM';
+  if (/^\/channels\/\d+\/\d+\/threads\//.test(p)) return 'thread';
+  if (/^\/channels\/\d+\/\d+/.test(p)) return 'server channel';
+  if (/^\/channels\/\d+/.test(p)) return 'server';
+  return (/^\/([a-z-]{2,24})/.exec(p)?.[1] ?? 'other') + ' page';
+};
+const MODS = [ [ 'BetterDiscord', 'BdApi' ], [ 'Vencord', 'Vencord' ], [ 'Equicord', 'Equicord' ], [ 'Replugged', 'replugged' ], [ 'Powercord', 'powercord' ], [ 'shelter', 'shelter' ], [ 'GooseMod', 'goosemod' ], [ 'Kernel', 'kernel' ] ];
+const modsOnPage = () => MODS.filter(([ , g ]) => { try { return window[g] != null; } catch { return false; } }).map(([ n ]) => n);
+const netinfo = () => {
+  const c = navigator.connection;
+  return c ? { type: c.effectiveType, rtt: c.rtt, mbps: c.downlink, saveData: c.saveData || undefined } : undefined;
+};
+const heapMB = () => performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : undefined;
+
+// Finds module exports by shape (Discord's action dispatcher, server store), in small slices of idle time so starting a
+// recording never stutters even with Discord's ~30k modules
+const idle = fn => (window.requestIdleCallback ?? setTimeout)(fn, { timeout: 1000 });
+const scanFor = (tests, done) => {
+  const c = getReq()?.c, names = Object.keys(tests), found = {};
+  if (!c || !names.length) return done(found);
+  const ids = Object.keys(c);
+  let i = 0;
+  const step = dl => {
+    const end = performance.now() + Math.max(4, Math.min(10, dl?.timeRemaining?.() ?? 8));
+    for (; i < ids.length && performance.now() < end; i++) {
+      const ex = c[ids[i]]?.exports;
+      if (ex == null || (typeof ex !== 'object' && typeof ex !== 'function')) continue;
+      for (const n of names) {
+        if (found[n]) continue;
+        try {
+          if (tests[n](ex)) { found[n] = ex; continue; }
+          for (const k of Object.keys(ex)) { const v = ex[k]; if (v && (typeof v === 'object' || typeof v === 'function') && tests[n](v)) { found[n] = v; break; } }
+        } catch { }
+      }
+      if (names.every(n => found[n])) { i = ids.length; break; }
+    }
+    if (i < ids.length) idle(step); else done(found);
+  };
+  idle(step);
+};
+const isDispatcher = v => typeof v.dispatch === 'function' && typeof v.subscribe === 'function' && typeof v.unsubscribe === 'function' &&
+  (typeof v.isDispatching === 'function' || typeof v.addInterceptor === 'function' || '_actionHandlers' in v);
+const isGuildStore = v => v._dispatchToken !== undefined && typeof v.getName === 'function' && v.getName() === 'GuildStore';
+
+// Discord's actions (gateway, voice, streams, message loading): each one's count and time, and details for the ones
+// that explain problems. The wrapper is installed once and costs one check per action while not recording.
+const loadT = new Map();
+const since = id => { const t = loadT.get(id); loadT.delete(id); return t ? Math.round(performance.now() - t) : undefined; };
+const nums = o => {
+  if (!o || typeof o !== 'object') return {};
+  const r = {};
+  for (const k of Object.keys(o).slice(0, 12)) if (typeof o[k] === 'number' || typeof o[k] === 'boolean') r[k] = o[k];
+  return r;
+};
+const FLUX = {
+  CONNECTION_OPEN: () => ({}),
+  CONNECTION_RESUMED: () => ({}),
+  CONNECTION_INTERRUPTED: () => ({}),
+  CONNECTION_CLOSED: a => ({ code: a.code }),
+  RTC_CONNECTION_STATE: a => ({ state: String(a.state ?? '').slice(0, 30), ctx: String(a.context ?? '').slice(0, 20) || undefined }),
+  VOICE_CHANNEL_SELECT: a => ({ joined: !!a.channelId }),
+  STREAM_CREATE: () => ({}), STREAM_START: () => ({}), STREAM_STOP: () => ({}), STREAM_DELETE: () => ({}), STREAM_WATCH: () => ({}), STREAM_CLOSE: () => ({}),
+  MEDIA_ENGINE_SET_GO_LIVE_SOURCE: a => nums(a.settings?.qualityOptions),
+  CHANNEL_SELECT: a => ({ server: a.guildId ? anon(a.guildId, 's') : 'DMs', c: anon(a.channelId) }),
+  LOAD_MESSAGES: a => { loadT.set(a.channelId, performance.now()); return { c: anon(a.channelId) }; },
+  LOAD_MESSAGES_SUCCESS: a => ({ c: anon(a.channelId), msgs: Array.isArray(a.messages) ? a.messages.length : undefined, fetch: since(a.channelId) }),
+  LOAD_MESSAGES_FAILURE: a => ({ c: anon(a.channelId), fetch: since(a.channelId) })
+};
+let fluxHooked = false;
+const hookFlux = () => {
+  if (fluxHooked) return true;
+  const Dp = perfMods.dispatcher;
+  if (!Dp) return false;
+  const orig = Dp.dispatch;
+  const w = function (a) {
+    if (!dbg.on) return orig.apply(this, arguments);
+    const t = performance.now();
+    try { return orig.apply(this, arguments); }
+    finally {
+      try {
+        const ms = performance.now() - t, type = /^[A-Z0-9_]{2,64}$/.test(a?.type) ? a.type : 'OTHER';
+        const s = dbg.flux.get(type);
+        if (s) { s[0]++; s[1] += ms; if (ms > s[2]) s[2] = ms; } else dbg.flux.set(type, [ 1, ms, ms ]);
+        const f = FLUX[type];
+        if (f || ms >= 50) D(f ? 'flux' : 'flux-slow', { type, ms: ms >= 5 ? Math.round(ms) : undefined, ...(f ? f(a) : {}) });
+      } catch { }
+    }
+  };
+  try { Dp.dispatch = w; } catch { }
+  if (Dp.dispatch !== w) try { Object.defineProperty(Dp, 'dispatch', { value: w, writable: true, configurable: true }); } catch { }
+  return fluxHooked = Dp.dispatch === w;
+};
+
+const errSeen = (msg, src, line) => {
+  const m = scrub(msg), who = ownerOf(src);
+  const key = who + ' | ' + m;
+  const n = (dbg.errs.get(key) ?? 0) + 1;
+  if (dbg.errs.size < 300 || dbg.errs.has(key)) dbg.errs.set(key, n);
+  if (n <= 3) D('error', { msg: m, who, at: scriptName(src) + (line ? ':' + line : ''), times: n > 1 ? n : undefined });
+};
+const stackSrc = st => /\((\S+?):(\d+):\d+\)|at (\S+?):(\d+):\d+/.exec(String(st ?? '').split('\n').slice(1, 3).join('\n')) ?? [];
+
+const targetKind = el => {
+  try {
+    if (!el?.closest) return el?.nodeName?.toLowerCase?.() ?? 'gone';
+    if (el.closest('a[href^="/channels/"]')) return 'channel link';
+    if (el.closest('[data-list-item-id^="guildsnav"], [data-list-id="guildsnav"]')) return 'server list';
+    if (el.closest('[role="textbox"], textarea, input')) return 'text box';
+    if (el.closest('[data-list-id="chat-messages"]')) return 'messages';
+    if (el.closest('[role="dialog"]')) return 'popup';
+    if (el.closest('nav, [class*="sidebar"]')) return 'sidebar';
+    if (el.closest('button, [role="button"]')) return 'button';
+    return el.nodeName.toLowerCase();
+  } catch { return '?'; }
+};
+
+const dbgStats = () => ({
+  flux: [ ...dbg.flux ].sort((a, b) => b[1][1] - a[1][1]).slice(0, 60).map(([ k, [ n, ms, max ] ]) => [ k, n, Math.round(ms), Math.round(max) ]),
+  errs: [ ...dbg.errs ].sort((a, b) => b[1] - a[1]).slice(0, 80),
+  net: Object.fromEntries(Object.entries(dbg.net).map(([ k, v ]) => [ k, { n: v.n, mb: Math.round(v.kb / 102.4) / 10, avgMs: Math.round(v.ms / v.n), slow: v.slow, failed: v.err, r429: v.r429, cached: v.cached } ])),
+  dropped: dbg.dropped,
+  heap: heapMB(),
+  dom: document.getElementsByTagName('*').length
+});
+
+const dbgFlush = () => {
+  if (!dbg.q.length) return;
+  try { DiscordNative.ipc.send('DISCORD_UPDATED_QUOTES', { asarDbg: dbg.q.splice(0) }); } catch { }
+};
+
+const dbgStart = salt => {
+  if (dbg.on) return;
+  Object.assign(dbg, { on: true, q: [], salt: salt | 0 || 1, dropped: 0, flux: new Map(), errs: new Map(), net: {}, memN: 0 });
+  const offs = dbg.off = [];
+  const obs = (type, fn, opts) => {
+    try {
+      const o = new PerformanceObserver(l => { if (dbg.on) for (const e of l.getEntries()) try { fn(e); } catch { } });
+      o.observe({ type, buffered: false, ...opts });
+      offs.push(() => o.disconnect());
+    } catch { }
+  };
+  const on = (tgt, ev, fn, o) => { tgt.addEventListener(ev, fn, o); offs.push(() => tgt.removeEventListener(ev, fn, o)); };
+  const every = (fn, ms) => { const t = setInterval(fn, ms); offs.push(() => clearInterval(t)); };
+  const r = n => Math.round(n);
+
+  // Slow frames (150 ms+): how long, and whose code ran (Discord, asar, a mod) vs drawing
+  obs('long-animation-frame', e => {
+    if (e.duration < 150) return;
+    const own = {};
+    let js = 0;
+    for (const s of e.scripts ?? []) { const o = ownerOf(s.sourceURL); own[o] = (own[o] ?? 0) + s.duration; js += s.duration; }
+    const draw = e.styleAndLayoutStart > 0 ? e.startTime + e.duration - e.styleAndLayoutStart : 0;
+    if (draw >= 1) own.drawing = draw;
+    const rest = e.duration - js - draw;
+    if (rest >= 5) own['not attributed'] = rest;
+    for (const k in own) own[k] = r(own[k]);
+    const top = [ ...(e.scripts ?? []) ].sort((a, b) => b.duration - a.duration).slice(0, 3).map(s => ({
+      who: ownerOf(s.sourceURL), file: scriptName(s.sourceURL), fn: String(s.sourceFunctionName || '').slice(0, 40) || undefined,
+      via: scrub(s.invoker).slice(0, 70) || undefined, ms: r(s.duration), layout: r(s.forcedStyleAndLayoutDuration ?? 0) || undefined
+    }));
+    D('frame', { ms: r(e.duration), blocked: r(e.blockingDuration ?? 0), own, top, t: r(performance.timeOrigin + e.startTime) });
+  });
+
+  // Slow clicks and key presses (200 ms+ until the result was on screen), one line per interaction
+  const seenInput = new Set();
+  obs('event', e => {
+    if (e.duration < 200 || !e.interactionId || seenInput.has(e.interactionId)) return;
+    seenInput.add(e.interactionId);
+    if (seenInput.size > 200) seenInput.delete(seenInput.values().next().value);
+    D('input', { ev: e.name, on: targetKind(e.target), ms: r(e.duration), wait: r(e.processingStart - e.startTime), run: r(e.processingEnd - e.processingStart),
+      draw: r(Math.max(0, e.startTime + e.duration - e.processingEnd)), t: r(performance.timeOrigin + e.startTime) });
+  }, { durationThreshold: 104 });
+
+  // Network: totals per kind of request; each slow (1 s+) or failed request on its own
+  obs('resource', e => {
+    const u = redactUrl(e.name);
+    const n = dbg.net[u.kind] ??= { n: 0, kb: 0, ms: 0, slow: 0, err: 0, r429: 0, cached: 0 };
+    const st = e.responseStatus ?? 0;
+    n.n++; n.kb += (e.transferSize || 0) / 1024; n.ms += e.duration;
+    if (e.transferSize === 0 && e.decodedBodySize > 0) n.cached++;
+    if (st >= 400) n.err++;
+    if (st === 429) n.r429++;
+    if (e.duration >= 1000) n.slow++;
+    if (e.duration < 1000 && st < 400) return;
+    const q = e.requestStart > 0;
+    D('req', { kind: u.kind, path: u.path, ms: r(e.duration), status: st || undefined, queued: q ? r(e.requestStart - e.startTime) : undefined,
+      server: q ? r(e.responseStart - e.requestStart) : undefined, download: q ? r(e.responseEnd - e.responseStart) : undefined,
+      kb: r((e.transferSize || 0) / 1024), proto: e.nextHopProtocol || undefined, t: r(performance.timeOrigin + e.startTime) });
+  });
+
+  on(window, 'error', e => errSeen(e.message, e.filename, e.lineno));
+  on(window, 'unhandledrejection', e => { const [ , a, b, c, d ] = stackSrc(e.reason?.stack); errSeen('Unhandled promise rejection: ' + (e.reason?.message ?? e.reason), a ?? c, b ?? d); });
+  on(document, 'visibilitychange', () => D('visible', { on: !document.hidden }));
+  on(window, 'online', () => D('online', { on: true }));
+  on(window, 'offline', () => D('online', { on: false }));
+  if (navigator.connection) on(navigator.connection, 'change', () => D('netinfo', netinfo()));
+
+  every(dbgFlush, 2000);
+  every(() => { dbg.memN++; D('mem', { heap: heapMB(), heapMax: performance.memory ? r(performance.memory.jsHeapSizeLimit / 1048576) : undefined, dom: dbg.memN % 4 === 1 ? document.getElementsByTagName('*').length : undefined }); }, 15000);
+  every(() => D('stats', dbgStats()), 60000);
+
+  // Discord's modules: looked up when idle so starting a recording never stutters
+  idle(() => {
+    try { findPerf(); } catch { }
+    const want = {};
+    if (!perfMods.dispatcher) want.dispatcher = isDispatcher;
+    if (!perfMods.guilds) want.guilds = isGuildStore;
+    scanFor(want, found => { Object.assign(perfMods, found); if (dbg.on) pageInfo(); });
+  });
+  const pageInfo = () => {
+    let guilds;
+    try { hookFlux(); const g = perfMods.guilds; guilds = g?.getGuildCount?.() ?? Object.keys(g?.getGuilds?.() ?? {}).length; } catch { }
+    D('page', {
+      ua: navigator.userAgent.slice(0, 200), release: String(window.GLOBAL_ENV?.RELEASE_CHANNEL ?? '').slice(0, 20) || undefined,
+      route: routeKind(), size: innerWidth + 'x' + innerHeight, dpr: devicePixelRatio, cores: navigator.hardwareConcurrency, memGB: navigator.deviceMemory,
+      net: netinfo(), online: navigator.onLine, dom: document.getElementsByTagName('*').length, heap: heapMB(), guilds, mods: modsOnPage(),
+      reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches, theme: /theme-\w+/.exec(document.documentElement.className)?.[0],
+      found: { messages: !!perfMods.messages, channels: !!perfMods.channels, fetch: !!perfMods.actions, users: !!perfMods.users, settings: !!perfMods.router, actions: fluxHooked, servers: !!perfMods.guilds },
+      tab: { added: diag.patched, builds: diag.builds, error: diag.error ?? undefined },
+      speedups: Object.fromEntries([ 'prefetch', 'keepReady', 'instantSwitch', 'loader', 'warmSettings', 'memTrim', 'noBlur', 'noTrack', 'noTyping', 'domOpt', 'pure' ].map(k => [ k, !!cfg[k] ]))
+    });
+  };
+};
+
+const dbgStop = () => {
+  dbg.on = false;
+  for (const f of dbg.off.splice(0)) try { f(); } catch { }
+};
+
+// Called by asar's main process: {on, salt} starts, 'flush' hands over what's queued, false stops (returning the rest)
+Object.defineProperty(window, '__asarDbg', {
+  configurable: true,
+  value: arg => {
+    if (arg && typeof arg === 'object' && arg.on) { dbgStart(arg.salt); return true; }
+    if (!dbg.on) return [];
+    D('stats', dbgStats());
+    const out = dbg.q.splice(0);
+    if (arg === false) dbgStop();
+    return out;
+  }
+});
+if (cfg.debug) dbgStart(cfg.debug.salt);
+
+// Startup marks for debug logs: when Discord's UI and first messages appeared (checked 5x a second, at most 2 min)
+if (!window.__asarMarked) {
+  window.__asarMarked = true;
+  const mark = n => { try { DiscordNative.ipc.send('DISCORD_UPDATED_QUOTES', { asarMark: [ n, epoch() ] }); } catch { } };
+  let ui = false, n = 0;
+  const poll = () => {
+    if (!ui && document.querySelector('[data-list-id="guildsnav"], a[href^="/channels/"]')) { ui = true; mark('Discord UI visible'); }
+    if (ui && document.querySelector('li[id^="chat-messages-"]')) return mark('first messages visible');
+    if (++n < 600) setTimeout(poll, 200);
+  };
+  setTimeout(poll, 0);
+}
 
 // --- DOM Optimizer: defer removal of heavy activity nodes to avoid layout thrash ---
 if (cfg.domOpt) {

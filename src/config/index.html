@@ -138,6 +138,39 @@ textarea { font: 12.5px/1.5 ui-monospace, "Cascadia Code", Menlo, Consolas, mono
 .about-hero b { font-size: 20px; } .about-hero span { display: block; color: var(--muted); font-size: 12.5px; }
 .muted { color: var(--muted); font-size: 12px; line-height: 1.55; }
 
+/* Debug */
+nav button.rec-on::after { content: ""; display: inline-block; width: 7px; height: 7px; margin-left: 7px; border-radius: 50%; background: var(--danger); vertical-align: 1px; animation: rpulse 1.4s ease-in-out infinite; }
+.rec { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 13px 14px; display: grid; gap: 9px; margin-bottom: 4px; }
+.rec.on { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); background: color-mix(in srgb, var(--danger) 6%, var(--surface)); }
+.rec-head { display: flex; align-items: center; gap: 9px; }
+.rdot { width: 10px; height: 10px; border-radius: 50%; background: color-mix(in srgb, var(--text) 25%, transparent); flex: none; }
+.rec.on .rdot { background: var(--danger); animation: rpulse 1.4s ease-in-out infinite; }
+@keyframes rpulse { 50% { opacity: .3; } }
+.rec-head b { font-size: 14.5px; }
+.rec-head .rt { margin-left: auto; font: 600 12.5px ui-monospace, "Cascadia Code", Menlo, Consolas, monospace; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rec.on .rt { color: var(--text); }
+.rec-sub { color: var(--muted); font-size: 12.5px; }
+.rec-btns { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.rec-btns .status { margin: 0 0 0 4px; }
+.tail { height: 168px; overflow: auto; background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font: 10.5px/1.55 ui-monospace, "Cascadia Code", Menlo, Consolas, monospace; color: var(--muted); user-select: text; }
+.tail div { white-space: pre-wrap; overflow-wrap: anywhere; padding-left: 15ch; text-indent: -15ch; }
+.tail .w { color: #f0b232; } .tail .b { color: var(--danger); } .tail .g { color: var(--text); }
+.tail .empty { white-space: normal; font-family: inherit; }
+.tail::-webkit-scrollbar, .tail::-webkit-scrollbar-corner { width: 8px; height: 8px; background: transparent; }
+.tail::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text) 14%, transparent); border-radius: 8px; }
+.rlast { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding-top: 9px; border-top: 1px solid var(--line); font-size: 12.5px; }
+.rlast span { flex: 1 1 100%; color: var(--ok); }
+.rlast .btn { padding: 4px 9px; font-size: 12px; }
+.logs { list-style: none; padding: 0; margin: 0; }
+.logs li { display: flex; align-items: center; gap: 6px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.logs li:last-child { border-bottom: 0; }
+.logs .ln { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.logs .ln b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.logs .ln small { color: var(--muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.logs li.new .ln b { color: var(--ok); }
+.logs .btn { padding: 4px 9px; font-size: 12px; }
+.logs .none { color: var(--muted); }
+
 /* Restart bar */
 .bar { position: fixed; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--bg2); border-top: 1px solid var(--line); transform: translateY(100%); transition: transform .2s ease; box-shadow: 0 -8px 24px rgb(0 0 0 / .25); }
 body:has(.bar.on) .content { padding-bottom: 72px; }
@@ -162,6 +195,7 @@ body:has(.bar.on) .content { padding-bottom: 72px; }
     <button role="tab" data-tab="privacy">Privacy</button>
     <button role="tab" data-tab="theming">Theming</button>
     <button role="tab" data-tab="advanced">Advanced</button>
+    <button role="tab" data-tab="debug" id="dbgtab">Debug</button>
     <button role="tab" data-tab="about">About</button>
     <div class="foot">Open anytime with<br><kbd id="hk">Ctrl + Alt + O</kbd></div>
   </nav>
@@ -286,6 +320,32 @@ body:has(.bar.on) .content { padding-bottom: 72px; }
       <div class="status" id="rstatus"></div>
     </section>
 
+    <section id="debug">
+      <h2>Debug</h2>
+      <p class="lead">Record what Discord and asar are doing, then send the log. It shows whether a problem comes from asar, Discord, the PC or the network, without having to reproduce it.</p>
+      <div class="notice" id="dbgcrash" hidden>
+        <b>Discord closed during the last recording</b>
+        <span>It crashed, froze and was closed, or the PC turned off. The log was saved up to a few seconds before that.</span>
+        <button class="btn" id="dbgcrashopen">Open that log</button>
+      </div>
+      <div class="rec" id="rec">
+        <div class="rec-head"><span class="rdot"></span><b id="rstate">Not recording</b><span class="rt" id="rtime"></span></div>
+        <div class="rec-sub" id="rsub">Start, do whatever is slow or broken in Discord, then stop. The log is saved as a text file.</div>
+        <div class="rec-btns"><button class="btn primary" id="rbtn">Start recording</button><button class="btn" id="rsnap" hidden>Save log now</button><span class="status" id="rmsg"></span></div>
+        <div class="rlast" id="rlast" hidden></div>
+      </div>
+      <div class="row"><div class="t"><b>Record from Discord's start</b><span>Every launch is recorded from the first second (startup included) until you stop it or close Discord. Takes effect next launch; no restart needed now.</span></div><label class="sw"><input type="checkbox" id="dbgstart"><i></i></label></div>
+      <h3>Live</h3>
+      <div class="tail" id="tail"><div class="empty">Events appear here while recording: channel switches, slow frames and clicks, freezes, slow requests, CPU and memory every 5 s.</div></div>
+      <h3>Saved logs</h3>
+      <ul class="logs" id="logs"></ul>
+      <div class="row"><div class="t"><b>Logs folder</b><span>The newest 12 logs are kept.</span></div><button class="btn" id="dbgfolder">Open folder</button></div>
+      <h3>What's in a log</h3>
+      <p class="muted">Timings (startup, channel switches, clicks, slow frames and whose code caused them), freezes and crashes, CPU and memory of the PC and of Discord, graphics card and driver, displays, network speed by kind of request and connection drops, errors, and Discord and asar settings.</p>
+      <p class="muted" style="margin-top:6px">Never in a log: messages, names, usernames, server or channel names, links, files, your token or account details. Server and channel IDs become random codes (c:3fa1c2) that only mean something inside one log, and your user folder is removed from paths.</p>
+      <p class="muted" style="margin-top:6px">Recording costs almost nothing: Discord's events are collected as they happen and sent in one batch every 2 s, CPU and memory are checked every 5 s. When it's off, nothing runs.</p>
+    </section>
+
     <section id="about">
       <h2>About</h2>
       <p class="lead">&nbsp;</p>
@@ -322,6 +382,7 @@ const tabs = [...document.querySelectorAll('nav [role=tab]')];
 const show = id => {
   for (const t of tabs) t.setAttribute('aria-selected', t.dataset.tab === id);
   for (const s of document.querySelectorAll('section')) s.classList.toggle('on', s.id === id);
+  dbgView(id === 'debug');
 };
 for (const t of tabs) t.onclick = () => show(t.dataset.tab);
 
@@ -528,6 +589,146 @@ const rows = [ [ 'asar', info.version ], [ 'Discord', info.discord && (info.disc
   [ 'Settings tab', tabStatus ], [ 'Details', d && `root ${d.root ? 'yes' : 'no'} · types ${d.types ? 'yes' : 'default'} · react ${d.react ? 'yes' : 'no'} · builds ${d.builds} · line ${d.line ? 'yes' : 'no'}` + (d.error ? ' · ' + d.error : '') ] ];
 $('kv').innerHTML = '';
 for (const [ k, v ] of rows) if (v) { const dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = k; dd.textContent = v; $('kv').append(dt, dd); }
+
+// Debug
+const DBG = Native.debug;
+let dst = DBG ? DBG.status() : null, tailSeq = 0, pollT = 0, viewing = false, busy = false;
+const two = n => String(n).padStart(2, '0');
+const fmtDur = ms => { const s = Math.max(0, Math.floor(ms / 1000)); return (s >= 3600 ? Math.floor(s / 3600) + ':' : '') + two(Math.floor(s / 60) % 60) + ':' + two(s % 60); };
+const fmtSize = b => b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB';
+// "asar-log-2026-10-06_14-31-02-partial.txt" -> [ "Today 14:31:02", "partial" ]
+const logTitle = n => {
+  const m = /^asar-log-(\d{4})-(\d\d)-(\d\d)_(\d\d)-(\d\d)-(\d\d)(?:-(partial|unfinished))?\.txt$/.exec(n);
+  if (!m) return [ n ];
+  const d = new Date(+m[1], m[2] - 1, +m[3]), day = new Date(); day.setHours(0, 0, 0, 0);
+  const diff = Math.round((day - d) / 86400000);
+  const when = diff === 0 ? 'Today' : diff === 1 ? 'Yesterday' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return [ when + ' ' + m[4] + ':' + m[5] + ':' + m[6], m[7] ];
+};
+const msg = (t, k) => { $('rmsg').textContent = t; $('rmsg').className = 'status' + (k ? ' ' + k : ''); };
+
+const tick = () => { $('rtime').textContent = dst?.on ? fmtDur(Date.now() - dst.startedAt) + ' · ' + (dst.events ?? 0).toLocaleString() + ' events' : ''; };
+const renderRec = () => {
+  const on = !!dst?.on;
+  $('rec').classList.toggle('on', on);
+  $('dbgtab').classList.toggle('rec-on', on);
+  $('rstate').textContent = on ? 'Recording' : 'Not recording';
+  $('rbtn').textContent = on ? 'Stop and save' : 'Start recording';
+  $('rbtn').className = 'btn ' + (on ? 'danger' : 'primary');
+  $('rsnap').hidden = !on;
+  $('rsub').textContent = on ? (dst.how === 'launch' ? 'Started together with Discord. ' : '') + 'Do whatever is slow or broken, then stop. Closing Discord also saves the log.'
+    : 'Start, do whatever is slow or broken in Discord, then stop. The log is saved as a text file.';
+  tick();
+};
+// Buttons for one saved log
+const logButtons = (name, into) => {
+  const b = (label, fn, tip) => { const x = document.createElement('button'); x.className = 'btn'; x.textContent = label; if (tip) x.title = tip; x.onclick = fn; return x; };
+  const copy = b('Copy summary', async () => { copy.textContent = (await DBG.copy(name)) ? 'Copied' : 'Failed'; setTimeout(() => { copy.textContent = 'Copy summary'; }, 1500); }, 'Copies everything above the timeline, ready to paste into a chat');
+  into.append(b('Open', () => DBG.open(name)), b('Show', () => DBG.reveal(name), 'Show in folder'), copy);
+};
+const renderLast = name => {
+  const el = $('rlast');
+  el.hidden = !name;
+  el.innerHTML = '';
+  if (!name) return;
+  const l = (dst?.logs ?? []).find(x => x.name === name);
+  const t = document.createElement('span');
+  const [ title, tag ] = logTitle(name);
+  t.textContent = 'Saved ' + title.replace(/^Today /, '') + (tag === 'partial' ? ' (so far)' : '') + (l ? ' · ' + fmtSize(l.size) : '');
+  el.append(t);
+  logButtons(name, el);
+};
+const renderLogs = fresh => {
+  const ul = $('logs');
+  ul.innerHTML = '';
+  const logs = dst?.logs ?? [];
+  if (!logs.length) { const li = document.createElement('li'); li.className = 'none'; li.textContent = 'No logs yet.'; ul.append(li); return; }
+  for (const l of logs.slice(0, 6)) {
+    const li = document.createElement('li');
+    if (l.name === fresh) li.className = 'new';
+    const [ title, tag ] = logTitle(l.name);
+    const name = document.createElement('div');
+    name.className = 'ln';
+    name.title = l.name;
+    const b = document.createElement('b'), sm = document.createElement('small');
+    b.textContent = title;
+    sm.textContent = fmtSize(l.size) + (tag === 'partial' ? ' · part' : tag === 'unfinished' ? ' · Discord closed' : '');
+    name.append(b, sm);
+    li.append(name);
+    logButtons(l.name, li);
+    ul.append(li);
+  }
+};
+const tailLine = t => {
+  const d = document.createElement('div');
+  d.textContent = t;
+  if (/FROZE|CRASHED|FAILED|stuck|OFFLINE|NOT READY|error|ended:/.test(t)) d.className = 'b';
+  else if (/slow|SAFE MODE|rate-limited/.test(t)) d.className = 'w';
+  else if (/channel switch|Recording/.test(t)) d.className = 'g';
+  return d;
+};
+const poll = async () => {
+  clearTimeout(pollT);
+  if (!viewing || !DBG) return;
+  try {
+    const r = await DBG.tail(tailSeq);
+    if (r.lines.length) {
+      const box = $('tail'), stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+      box.querySelector('.empty')?.remove();
+      for (const l of r.lines) box.append(tailLine(l));
+      while (box.childElementCount > 400) box.firstElementChild.remove();
+      if (stick) box.scrollTop = box.scrollHeight;
+    }
+    tailSeq = r.seq;
+    if (dst && (r.on !== dst.on || r.startedAt !== dst.startedAt)) { dst = DBG.status(); renderRec(); renderLogs(); }
+    else if (dst) { dst.events = r.events; tick(); }
+  } catch { }
+  pollT = setTimeout(poll, 1000);
+};
+const dbgView = v => { viewing = v; if (v) poll(); else clearTimeout(pollT); };
+
+if (DBG && dst) {
+  renderRec();
+  renderLogs();
+  renderLast(dst.last);
+  $('dbgstart').checked = !!cfg.debugOnStart;
+  $('dbgstart').onchange = async () => { cfg.debugOnStart = $('dbgstart').checked; dst = await DBG.onStart(cfg.debugOnStart); };
+  if (dst.recovered) { $('dbgcrash').hidden = false; $('dbgcrashopen').onclick = () => DBG.open(dst.recovered); }
+  $('dbgfolder').onclick = () => DBG.open();
+  $('rbtn').onclick = async () => {
+    if (busy) return;
+    busy = true;
+    $('rbtn').disabled = true;
+    if (!dst.on) {
+      dst = await DBG.start();
+      tailSeq = 0;
+      $('tail').innerHTML = '';
+      msg('');
+      renderLast(null);
+    } else {
+      $('rbtn').textContent = 'Saving…';
+      const name = await DBG.stop();
+      dst = DBG.status();
+      renderLogs(name);
+      renderLast(name);
+      msg(name ? '' : 'Nothing was saved.', name ? '' : 'err');
+    }
+    $('rbtn').disabled = false;
+    busy = false;
+    renderRec();
+    poll();
+  };
+  $('rsnap').onclick = async () => {
+    $('rsnap').disabled = true;
+    const name = await DBG.snapshot();
+    dst = DBG.status();
+    renderLogs(name);
+    renderLast(name);
+    msg(name ? '' : 'Nothing to save yet.');
+    $('rsnap').disabled = false;
+  };
+  setInterval(() => { if (dst?.on) tick(); }, 1000);
+} else $('dbgtab').hidden = true;
 
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !e.target.matches('textarea, input')) Native.close(); });
 </script>

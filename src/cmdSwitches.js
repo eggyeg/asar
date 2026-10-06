@@ -53,6 +53,7 @@ const apply = () => {
   }
 
   for (const k in c) app.commandLine.appendSwitch(k, [...c[k]].join(k === 'js-flags' ? ' ' : ','));
+  global.asarFlags = Object.entries(c).map(([ k, v ]) => '--' + k + (v.size ? '=' + [...v].join(k === 'js-flags' ? ' ' : ',') : ''));
 };
 
 module.exports = apply;
