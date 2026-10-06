@@ -94,7 +94,9 @@ const saveFreezes = () => {
 
 const riskyOn = () => {
   const preset = require('./cmdSwitches').presetName();
-  return preset === 'gpu' || oaConfig.priority === true || oaConfig.domOptimizer === true || !!(oaConfig.customFlags ?? '').trim();
+  // Anything asar changes that could slow Discord down: flags, priority, page changes, the user's own CSS/JS
+  return preset === 'gpu' || oaConfig.priority === true || oaConfig.domOptimizer === true || !!(oaConfig.customFlags ?? '').trim()
+    || oaConfig.instantUI !== false || oaConfig.noBlur !== false || !!(oaConfig.css ?? '').trim() || !!(oaConfig.js ?? '').trim();
 };
 
 const enterSafeMode = reason => {
@@ -190,8 +192,7 @@ const startCore = () => {
     domOpt: oaConfig.domOptimizer === true && !oaConfig.safeMode && !pure,
     themeSync: oaConfig.themeSync !== false && !pure,
     entry: oaConfig.settingsEntry !== false,
-    noBlur: oaConfig.noBlur !== false && !pure,
-    instant: oaConfig.instantUI !== false && !pure,
+    noBlur: oaConfig.noBlur !== false && !pure && !oaConfig.safeMode,
     pure,
     hotkey: hotkeyLabel,
     stats: launchStats()
@@ -213,8 +214,8 @@ const startCore = () => {
       splash.pageReady(); // Show main window as soon as the DOM is ready instead of waiting on Core
 
       bw.webContents.executeJavaScript(injected()).catch(e => log('Inject', e));
-      if (!pure && oaConfig.css) bw.webContents.insertCSS(oaConfig.css).catch(e => log('Inject', 'Custom CSS', e));
-      if (!pure && oaConfig.js) bw.webContents.executeJavaScript(oaConfig.js).catch(e => log('Inject', 'Custom JS', e));
+      if (!pure && !oaConfig.safeMode && oaConfig.css) bw.webContents.insertCSS(oaConfig.css).catch(e => log('Inject', 'Custom CSS', e));
+      if (!pure && !oaConfig.safeMode && oaConfig.js) bw.webContents.executeJavaScript(oaConfig.js).catch(e => log('Inject', 'Custom JS', e));
     });
 
     // Hotkey that always opens asar settings, even if Discord changes its settings UI again

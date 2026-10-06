@@ -36,7 +36,7 @@ const apply = () => {
 
   // Instant UI: Discord follows the system "reduce motion" setting by default, so this switches off its
   // JS-driven animations (modals, popouts, channel switches) properly rather than just CSS ones
-  if (oaConfig.instantUI !== false && !oaConfig.pure) flags.push('--force-prefers-reduced-motion');
+  if (oaConfig.instantUI !== false && !oaConfig.pure && !oaConfig.safeMode) flags.push('--force-prefers-reduced-motion');
 
   if (process.platform === 'linux' && settings.get('openH264Enabled', true))
     flags.push('--enable-libopenh264', '--openh264-library-path=' + join(paths.getAssetCachePath(), 'openh264', 'libopenh264-2.5.1-linux64.7.so'));

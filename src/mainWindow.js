@@ -61,11 +61,12 @@ if (blockParts.length) {
 
 // --- Performance CSS ---
 // Blur (backdrop-filter) is one of the most expensive things Chromium composites; Discord's refreshed UI uses it on
-// popouts, modals and overlays. Animations are turned off separately via --force-prefers-reduced-motion in the main process.
-const perfCSS = [
-  cfg.noBlur && '*,*::before,*::after{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}',
-  cfg.instant && '*,*::before,*::after{transition-duration:1ms!important;transition-delay:0s!important;scroll-behavior:auto!important}'
-].filter(Boolean).join('');
+// popouts, modals and overlays. Measured: this rule adds no restyle cost.
+// Animations are turned off ONLY via --force-prefers-reduced-motion (Discord's own reduced-motion mode). asar 1.1-1.3
+// also set `transition-duration:1ms` on every element; since every element's transition-property defaults to `all`,
+// that turned every style change into thousands of CSS transitions and froze Discord for 15-35 s on channel
+// switches and stream start/stop (measured: 0.8 s -> 24 s for six restyles of 20k elements). Never do that again.
+const perfCSS = cfg.noBlur ? '*,*::before,*::after{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}' : '';
 
 const addStyle = (id, css) => {
   if (!css) return;

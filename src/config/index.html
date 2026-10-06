@@ -202,7 +202,7 @@ body:has(.bar.on) .content { padding-bottom: 72px; }
         <div class="freeze" id="freeze">No freezes this session.</div>
       </div>
       <h3>Feel</h3>
-      <div class="row"><div class="t"><b>Instant UI</b><span>Turns off Discord's animations (modals, popouts, channel switches) so everything responds immediately.</span></div><label class="sw"><input type="checkbox" data-k="instantUI" data-d="true"><i></i></label></div>
+      <div class="row"><div class="t"><b>Instant UI</b><span>Switches on Discord's own reduced-motion mode, so modals, popouts and channel switches don't animate.</span></div><label class="sw"><input type="checkbox" data-k="instantUI" data-d="true"><i></i></label></div>
       <div class="row"><div class="t"><b>Turn off blur</b><span>Removes background blur, one of the most expensive effects for your GPU. Looks almost the same.</span></div><label class="sw"><input type="checkbox" data-k="noBlur" data-d="true"><i></i></label></div>
       <div class="row" id="prow"><div class="t"><b>High priority</b><span>Windows gives all of Discord's processes CPU time before other apps. Can make games you're playing or streaming stutter.</span></div><label class="sw"><input type="checkbox" data-k="priority" data-d="false"><i></i></label></div>
       <h3>Preset</h3>
@@ -440,7 +440,7 @@ $('repair').onclick = async () => {
 // Safe mode / migration / freezes
 if (cfg.safeMode) {
   $('safebox').hidden = false;
-  $('safetext').textContent = 'Discord froze (' + (cfg.safeModeReason || 'unknown') + (cfg.safeModeAt ? ', ' + new Date(cfg.safeModeAt).toLocaleString() : '') + '), so asar turned off its optional speed-ups (GPU boost, high priority, DOM optimizer, custom flags).';
+  $('safetext').textContent = 'Discord froze (' + (cfg.safeModeReason || 'unknown') + (cfg.safeModeAt ? ', ' + new Date(cfg.safeModeAt).toLocaleString() : '') + '), so asar turned off everything optional (Instant UI, blur removal, GPU boost, high priority, DOM optimizer, custom flags, custom CSS/JS).';
 }
 $('safeoff').onclick = () => { cfg.safeMode = false; save(); $('safebox').hidden = true; };
 if (info.migrated) $('migbox').hidden = false;
