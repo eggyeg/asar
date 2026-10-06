@@ -309,7 +309,12 @@ body:has(.bar.on) .content { padding-bottom: 72px; }
         <div class="hint" id="uhint">Leave empty to use the latest rottenvia/asar build.</div>
         <div class="status" id="ustatus"></div>
       </div>
-      <div class="row"><div class="t"><b>Auto-update asar</b><span>Checks for a new build a few seconds after Discord starts. You get a notification when one is installed.</span></div><label class="sw"><input type="checkbox" data-k="autoupdate" data-d="true"><i></i></label></div>
+      <div class="notice info" id="updready" hidden>
+        <b id="updtitle">Update ready</b>
+        <span>It's downloaded. Restart Discord to use it, or it's installed the next time Discord starts.</span>
+        <button class="btn primary" id="updgo">Restart now</button>
+      </div>
+      <div class="row"><div class="t"><b>Auto-update asar</b><span>Checks at start, every 20 minutes and when you come back to Discord. Each check is a tiny request that costs nothing when nothing changed. A new build downloads in the background and Discord asks to restart now or later; it's also installed on the next start.</span></div><label class="sw"><input type="checkbox" data-k="autoupdate" data-d="true"><i></i></label></div>
       <div class="last" id="last"><span class="ldot" id="ldot"></span><span id="ltext">Not checked yet. Click Check now, or restart Discord.</span></div>
       <h3>Files</h3>
       <div class="row"><div class="t"><b>settings.json</b><span>Discord and asar's raw settings file.</span></div><button class="btn" id="openfile">Open</button></div>
@@ -439,8 +444,12 @@ $('check').onclick = async () => {
   $('check').disabled = false;
   $('ustatus').textContent = '';
   showLast({ time: Date.now(), result: r });
-  if (/restart/i.test(r)) $('bar').classList.add('on');
+  const m = /^Update ready: (\S+)/.exec(r);
+  if (m) showReady(m[1]);
 };
+const showReady = v => { $('updready').hidden = false; $('updtitle').textContent = 'Update ready: asar ' + String(v).replace(/-[0-9a-f]{7}$/, ''); };
+$('updgo').onclick = () => { $('updgo').disabled = true; $('updgo').textContent = 'Restarting…'; Native.installUpdate(); };
+if (info.update?.status === 'ready') showReady(info.update.version);
 
 const ago = t => {
   const s = Math.round((Date.now() - t) / 1000);
@@ -452,7 +461,7 @@ const ago = t => {
 const showLast = l => {
   if (!l) return;
   const r = l.result || '';
-  $('ldot').className = 'ldot ' + (/up to date/i.test(r) ? 'ok' : /^updated|installed/i.test(r) ? 'new' : 'err');
+  $('ldot').className = 'ldot ' + (/up to date/i.test(r) ? 'ok' : /^updated|installed|update ready/i.test(r) ? 'new' : 'err');
   $('ltext').textContent = 'Last check ' + ago(l.time) + ': ' + r;
 };
 showLast(info.lastUpdate);

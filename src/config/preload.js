@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('Native', {
   minimize: () => ipcRenderer.send('cm'),
   open: () => ipcRenderer.send('of'),
   update: () => ipcRenderer.invoke('cu'),
+  installUpdate: () => ipcRenderer.send('cy'),
   restore: () => ipcRenderer.invoke('cx'),
   repairCaches: () => ipcRenderer.invoke('ck'),
   debug: {

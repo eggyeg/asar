@@ -83,10 +83,14 @@ After that, asar keeps itself up to date.
 - Tracking block now also covers Sentry (`*.sentry.io`, `/error-reporting-proxy/`), both v7 and v8 clients.
 
 **UI**
-- New splash with a determinate progress bar, a retry countdown, and Skip/Quit buttons that appear if updates stall.
+- **Startup bar that completes:** one bar for the whole start. Between steps (updates checked, Discord's window created, page received, Discord ready) it moves at the pace of your last 5 launches, so it's roughly linear and lands near the end when Discord is ready. It never passes a step that hasn't happened; if a step is late it keeps creeping toward it, with a sheen moving through it so it never looks stuck. When Discord is ready it fills to 100% before the splash closes. Discord's own update downloads show real progress, and Skip/Quit appear if updates stall.
 - New settings window with General, Performance, Privacy, Theming, Advanced, Debug and About tabs.
 - A **Restore stock Discord** button that puts back `app.asar.backup` and keeps asar as `app.asar.asar-fork`.
-- Self-updates from this repo's [`build` branch](https://github.com/rottenvia/asar/tree/build) a few seconds after launch and shows a notification when it installs an update. Settings → Advanced shows when it last checked and the result. You can turn it off or point it at another URL there. asar never pulls from upstream OpenAsar, which would replace this build.
+- **Updates without lag:** asar checks this repo's [`build` branch](https://github.com/rottenvia/asar/tree/build) at start, every 20 minutes and when you come back to Discord after 5+ minutes. Each check asks for a ~300 byte `version.json` with the ETag from last time, so while nothing changed GitHub answers `304 Not Modified` with no body. It runs in Discord's main process; nothing polls in Discord's page. GitHub caches the file for 5 minutes, so a new build reaches you within about 5 to 25 minutes.
+- **Update popup:** a new build downloads in the background and is checked (asar header and SHA-256 from `version.json`). Then Discord shows a popup over a softly blurred window, with the version, what's new, **Restart now** and **Later**. Later (or Escape) shrinks it into a small green **Update** button in Discord's top bar, just left of Discord's own icons. Its spot is measured so it never covers anything clickable, and it follows the icons when the window resizes. Click it to bring the popup back.
+- **Never touches the running app.asar:** the download is kept as `app.asar.update` and put in place when you restart from the popup, when Discord quits, or on the next start.
+- **Updates at startup:** if a new build is found while Discord starts (or one is waiting from last time), the splash shows "Updating asar…" with real download progress, installs it and restarts Discord once, before Discord's core even loads. If nothing's found it never holds Discord up more than 1.5 s, and a guard stops it from ever restart-looping on a build that won't install.
+- Settings → Advanced shows the last check and a **Restart now** button when an update is ready. You can turn auto-update off or point it at another URL there. asar never pulls from upstream OpenAsar, which would replace this build.
 
 Existing OpenAsar settings (CSS, JS, preset, toggles) are migrated automatically.
 
@@ -136,6 +140,8 @@ To check which build you're on, open asar settings → About. The version ends w
 | `ASAR_QUICKSTART=1` | Skip the splash wait (same as the Quickstart toggle) |
 | `ASAR_NOSTART=1` | Run the updater but don't start Discord's core |
 | `ASAR_SMOKE=1` | Print `ASAR_SMOKE_OK` and exit once Discord has fully started (used by CI) |
+| `ASAR_UPDATE_INTERVAL=ms` | How often to check for updates (default 20 minutes, minimum 5 s; for testing) |
+| `ASAR_NO_RELAUNCH=1` | Installing an update exits Discord instead of restarting it (for testing) |
 
 The older `OPENASAR_*` names still work.
 

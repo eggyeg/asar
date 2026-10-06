@@ -1207,6 +1207,198 @@ document.addEventListener('click', e => {
   if (row?.contains(e.target)) open();
 }, true);
 
+// --- asar update popup ---
+// When asar has downloaded a new build (checked by asar's main process, nothing polls in this page), a popup asks to
+// restart now or later. "Later" tucks it into a small pill in Discord's top bar, left of Discord's own icons, measured
+// so it never covers anything clickable; the pill brings the popup back. Animations use transform and opacity only.
+const UPD_CSS = `
+#asar-upd{position:fixed;inset:0;z-index:2147483645;display:grid;place-items:center;-webkit-app-region:no-drag;font-family:var(--font-primary,"gg sans",system-ui,sans-serif)}
+#asar-upd .scrim{position:absolute;inset:0;background:rgb(0 0 0 / .34);-webkit-backdrop-filter:blur(5px)!important;backdrop-filter:blur(5px)!important;opacity:0;transition:opacity .22s ease}
+#asar-upd.on .scrim{opacity:1}
+#asar-upd .card{position:relative;box-sizing:border-box;width:min(400px,calc(100vw - 32px));border-radius:16px;padding:22px 22px 18px;
+ background:var(--modal-background,var(--background-surface-high,var(--background-base-lower,#2b2d31)));color:var(--text-default,var(--text-normal,#dbdee1));
+ border:1px solid var(--border-subtle,rgb(255 255 255 / .07));box-shadow:0 24px 64px rgb(0 0 0 / .45),0 2px 10px rgb(0 0 0 / .22);
+ opacity:0;transform:translateY(10px) scale(.97);transition:opacity .2s ease,transform .26s cubic-bezier(.2,.9,.3,1.1);will-change:transform,opacity}
+#asar-upd.on .card{opacity:1;transform:none}
+#asar-upd.away{pointer-events:none}
+#asar-upd.away .card{transition:opacity .3s ease,transform .34s cubic-bezier(.5,0,.2,1)}
+#asar-upd .top{display:flex;gap:14px;align-items:center;margin-bottom:14px}
+#asar-upd .ic{position:relative;width:46px;height:46px;flex:none;border-radius:13px;display:grid;place-items:center;color:var(--brand-500,#5865f2);background:color-mix(in srgb,var(--brand-500,#5865f2) 17%,transparent)}
+#asar-upd .ic svg{width:28px;height:28px}
+#asar-upd .ic b{position:absolute;right:-5px;bottom:-5px;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:var(--status-positive,#23a55a);
+ box-shadow:0 0 0 3px var(--modal-background,var(--background-surface-high,#2b2d31))}
+#asar-upd .ic b svg,#asar-pill svg{width:13px;height:13px;fill:none;stroke:#fff;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}
+#asar-upd h2{margin:0;font-size:18px;line-height:23px;font-weight:700;color:var(--text-strong,var(--header-primary,#f2f3f5))}
+#asar-upd .ver{margin-top:2px;font-size:13px;color:var(--text-muted,#949ba4);font-variant-numeric:tabular-nums}
+#asar-upd .ver b{font-weight:600;color:var(--status-positive,#23a55a)}
+#asar-upd .new{margin:0 0 14px;padding:11px 14px;border-radius:10px;background:var(--background-base-lowest,rgb(0 0 0 / .16))}
+#asar-upd .new h3{margin:0 0 6px;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--text-muted,#949ba4)}
+#asar-upd ul{margin:0;padding:0 0 0 17px;display:grid;gap:4px;font-size:13.5px;line-height:1.4}
+#asar-upd .note{margin:0 0 16px;font-size:12px;line-height:1.4;color:var(--text-muted,#949ba4)}
+#asar-upd .btns{display:flex;justify-content:flex-end;gap:8px}
+#asar-upd button{font:inherit;font-size:14px;font-weight:600;border:0;border-radius:8px;padding:0 16px;height:38px;cursor:pointer;color:var(--text-strong,#f2f3f5);
+ background:var(--button-secondary-background,rgb(255 255 255 / .08));transition:filter .12s ease}
+#asar-upd button:hover{filter:brightness(1.18)}
+#asar-upd button.go{min-width:132px;color:#fff;background:var(--brand-500,#5865f2)}
+#asar-upd button:disabled{cursor:default;filter:none}
+#asar-upd button:focus-visible{outline:2px solid var(--focus-primary,#00a8fc);outline-offset:2px}
+#asar-upd .sp{display:inline-block;width:12px;height:12px;margin-right:8px;vertical-align:-1px;border-radius:50%;border:2px solid rgb(255 255 255 / .35);border-top-color:#fff;will-change:transform;animation:asar-uspin .7s linear infinite}
+@keyframes asar-uspin{to{transform:rotate(360deg)}}
+#asar-pill{position:fixed;z-index:2147483644;box-sizing:border-box;height:24px;display:flex;align-items:center;gap:5px;padding:0 10px 0 7px;margin:0;border:0;border-radius:12px;cursor:pointer;
+ font:600 12px/1 var(--font-primary,"gg sans",system-ui,sans-serif);color:#fff;background:var(--status-positive,#23a55a);box-shadow:0 1px 4px rgb(0 0 0 / .25);
+ -webkit-app-region:no-drag;opacity:0;transform:scale(.5);transition:opacity .18s ease,transform .24s cubic-bezier(.2,.9,.3,1.35),filter .12s ease;will-change:transform}
+#asar-pill.on{opacity:1;transform:none}
+#asar-pill:hover{filter:brightness(1.1)}
+#asar-pill:focus-visible{outline:2px solid var(--focus-primary,#00a8fc);outline-offset:2px}`;
+const ARROW = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3.5 13.5h9"/></svg>';
+const LAYERS = '<svg viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"><path opacity=".4" d="M32 26 56 38 32 50 8 38Z"/><path opacity=".7" d="M32 17 56 29 32 41 8 29Z"/><path d="M32 8 56 20 32 32 8 20Z"/></svg>';
+const short = v => String(v ?? '').replace(/-[0-9a-f]{7}$/, '');
+
+let upd = null, pill = null, pillT = 0, updKeys = null;
+const ipcUpd = what => { try { DiscordNative.ipc.send('DISCORD_UPDATED_QUOTES', { asarUpd: what }); } catch { } };
+
+// Where the pill goes: in Discord's top bar, just left of the icons on its right (inbox, help, window buttons).
+// Every spot is checked so the pill never covers anything clickable; fallbacks: top centre, then bottom right.
+const CLICKABLE = 'button,a,input,textarea,select,[role="button"],[role="link"],[role="tab"],[role="switch"],[contenteditable="true"]';
+const clickableAt = (x, y) => {
+  const el = document.elementFromPoint(x, y);
+  return !!el && !el.closest('#asar-pill,#asar-upd') && !!el.closest(CLICKABLE);
+};
+const viewW = () => document.documentElement.clientWidth || innerWidth; // without a scrollbar, if any
+const freeSpot = (x, y, w, h) => x >= 0 && y >= 0 && x + w <= viewW() && y + h <= innerHeight &&
+  ![ [ 2, 2 ], [ w / 2, h / 2 ], [ w - 2, 2 ], [ 2, h - 2 ], [ w - 2, h - 2 ] ].some(([ dx, dy ]) => clickableAt(x + dx, y + dy));
+const dockSpot = (w, h) => {
+  let bar = null;
+  const vw = viewW();
+  for (let el = document.elementFromPoint(vw / 2, 3), i = 0; el && el !== document.body && i < 25; el = el.parentElement, i++) {
+    const r = el.getBoundingClientRect();
+    if (r.top <= 1 && r.left <= 1 && r.width >= vw - 2 && r.height >= 20 && r.height <= 72) { bar = r; break; }
+  }
+  if (bar) {
+    const cy = bar.top + bar.height / 2;
+    let left = bar.right, gap = 0;
+    for (let x = bar.right - 3; x > bar.left + bar.width * 0.4; x -= 6) {
+      const el = document.elementFromPoint(x, cy)?.closest?.(CLICKABLE);
+      if (el && !el.closest('#asar-pill')) { left = Math.min(left, el.getBoundingClientRect().left); x = Math.min(x, left); gap = 0; }
+      else if (left < bar.right && (gap += 6) > 40) break;
+    }
+    const x = Math.round(left - 12 - w), y = Math.round(cy - h / 2);
+    if (freeSpot(x, y, w, h)) return { x, y, where: 'top bar' };
+  }
+  const tops = [ [ Math.round(vw / 2 - w / 2), 8, 'top centre' ], [ vw - w - 20, innerHeight - h - 84, 'bottom right' ] ];
+  for (const [ x, y, where ] of tops) if (freeSpot(x, y, w, h)) return { x, y, where };
+  return { x: vw - w - 20, y: innerHeight - h - 84, where: 'bottom right (forced)' };
+};
+const placePill = () => {
+  if (!pill?.isConnected) return;
+  // Measured with asar's own elements out of the way (hit tests skip pointer-events:none), at the pill's real size
+  pill.style.pointerEvents = 'none';
+  const s = dockSpot(pill.offsetWidth || 84, pill.offsetHeight || 24);
+  pill.style.pointerEvents = '';
+  Object.assign(pill.style, { left: s.x + 'px', top: s.y + 'px' });
+  return s;
+};
+let pillResize = 0;
+addEventListener('resize', () => { clearTimeout(pillResize); pillResize = setTimeout(placePill, 150); }, { passive: true });
+
+const showPill = (animateIn = true) => {
+  if (!document.getElementById('asar-upd-css')) addStyle('asar-upd-css', UPD_CSS);
+  if (!pill?.isConnected) {
+    pill = document.createElement('button');
+    pill.id = 'asar-pill';
+    pill.type = 'button';
+    pill.innerHTML = ARROW + '<span>Update</span>';
+    pill.onclick = () => openUpd(upd);
+    document.body.appendChild(pill);
+  }
+  pill.title = `asar ${short(upd?.version)} is ready. Click to restart or see what's new.`;
+  pill.setAttribute('aria-label', pill.title);
+  const s = placePill();
+  D('update', { ev: 'pill', at: s?.where });
+  if (animateIn) requestAnimationFrame(() => pill?.classList.add('on'));
+  clearInterval(pillT);
+  pillT = setInterval(() => { if (!document.hidden) placePill(); }, 8000); // Discord's layout can change (window size, full screen)
+  return s;
+};
+const hidePill = () => { clearInterval(pillT); pill?.remove(); pill = null; };
+
+const closeKeys = () => { if (updKeys) removeEventListener('keydown', updKeys, true); updKeys = null; };
+const openUpd = st => {
+  if (!st || st.status !== 'ready') return;
+  if (!document.getElementById('asar-upd-css')) addStyle('asar-upd-css', UPD_CSS);
+  hidePill();
+  document.getElementById('asar-upd')?.remove();
+  const m = document.createElement('div');
+  m.id = 'asar-upd';
+  m.setAttribute('role', 'dialog');
+  m.setAttribute('aria-modal', 'true');
+  m.setAttribute('aria-labelledby', 'asar-upd-title');
+  m.innerHTML = `<div class="scrim"></div><div class="card"><div class="top"><div class="ic">${LAYERS}<b>${ARROW}</b></div><div><h2 id="asar-upd-title">asar update ready</h2><div class="ver"></div></div></div>` +
+    `<div class="new"><h3>What's new</h3><ul></ul></div><p class="note">Restarting takes a few seconds. Calls and streams will disconnect.</p>` +
+    `<div class="btns"><button type="button" class="later">Later</button><button type="button" class="go">Restart now</button></div></div>`;
+  const ver = m.querySelector('.ver'), nb = document.createElement('b');
+  nb.textContent = short(st.version) || 'new version';
+  ver.append(`${short(st.current)}  →  `, nb);
+  const ul = m.querySelector('ul');
+  for (const n of (st.notes ?? []).slice(0, 5)) { const li = document.createElement('li'); li.textContent = n; ul.append(li); }
+  if (!ul.childElementCount) m.querySelector('.new').remove();
+  m.querySelector('.later').onclick = later;
+  m.querySelector('.scrim').onclick = later;
+  m.querySelector('.go').onclick = restart;
+  document.body.appendChild(m);
+  requestAnimationFrame(() => requestAnimationFrame(() => m.classList.add('on')));
+  m.querySelector('.go').focus({ preventScroll: true });
+  // While it's open, keys belong to the popup (Escape = Later), not to Discord's shortcuts
+  closeKeys();
+  updKeys = e => {
+    if (!document.getElementById('asar-upd')) return closeKeys();
+    if (e.key === 'Escape') { e.preventDefault(); later(); }
+    if (e.key === 'Tab') { e.preventDefault(); const b = [ ...m.querySelectorAll('button:not(:disabled)') ]; b[(b.indexOf(document.activeElement) + 1) % b.length]?.focus(); }
+    e.stopPropagation();
+  };
+  addEventListener('keydown', updKeys, true);
+  D('update', { ev: 'popup', version: short(st.version) });
+};
+
+// "Later": the card shrinks into the pill
+const later = () => {
+  const m = document.getElementById('asar-upd');
+  if (!m || m.classList.contains('away')) return;
+  closeKeys();
+  ipcUpd('later');
+  if (upd) upd.dismissed = true;
+  const card = m.querySelector('.card').getBoundingClientRect();
+  m.classList.add('away'); // out of the way of the pill's placement
+  showPill(false);
+  const p = pill.getBoundingClientRect();
+  const dx = p.left + p.width / 2 - (card.left + card.width / 2), dy = p.top + p.height / 2 - (card.top + card.height / 2);
+  m.classList.add('away');
+  m.classList.remove('on');
+  m.querySelector('.card').style.transform = `translate(${dx}px,${dy}px) scale(${Math.max(0.05, p.width / card.width)})`;
+  setTimeout(() => { m.remove(); pill?.classList.add('on'); }, 300);
+  D('update', { ev: 'later' });
+};
+
+const restart = () => {
+  const m = document.getElementById('asar-upd');
+  if (!m) return;
+  for (const b of m.querySelectorAll('button')) b.disabled = true;
+  m.querySelector('.go').innerHTML = '<span class="sp"></span>Restarting…';
+  D('update', { ev: 'restart' });
+  dbgFlush();
+  setTimeout(() => ipcUpd('restart'), 60); // let "Restarting…" reach the screen first
+};
+
+// From asar's main process: a build is ready (popup, or the pill if you said "later" before), or nothing is pending
+const onUpd = st => {
+  upd = st;
+  if (!st || st.status !== 'ready') { document.getElementById('asar-upd')?.remove(); closeKeys(); hidePill(); return; }
+  if (st.dismissed) { if (!document.getElementById('asar-upd')) showPill(); }
+  else openUpd(st);
+};
+Object.defineProperty(window, '__asarUpd', { configurable: true, value: st => { try { onUpd(st); } catch (e) { fail('update popup', e); } } });
+if (cfg.update?.status === 'ready') setTimeout(() => window.__asarUpd(cfg.update), 3000); // after Discord has settled
+
 // --- Debug recorder (asar settings > Debug) ---
 // Installed only while a recording is on and removed when it stops. Page events go to asar's main process in one
 // message every 2 s. Only timings, counts and kinds of things are recorded: no names, messages, links or account

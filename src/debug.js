@@ -490,7 +490,7 @@ const describeRaw = e => {
     case 'power': return 'power: ' + e.ev + (e.state != null ? ' ' + e.state : '');
     case 'display': return `displays: ${e.ev}${e.changed ? ' (' + e.changed + ')' : ''}, ${e.displays} connected`;
     case 'picker': return `screen-share picker: ${e.sources ?? '?'} sources in ${ms_(e.ms)} · asked ${e.asked}, made ${e.made}${e.cached ? ' · answered from cache' : ''}${e.shared ? ' · shared with a request in flight' : ''}`;
-    case 'update': return 'asar update check: ' + e.result;
+    case 'update': return e.ev ? `asar update ${e.ev}${e.version ? ' ' + e.version : ''}${e.at ? ' (pill in ' + e.at + ')' : ''}` : 'asar update: ' + e.result;
     case 'console': return `console error (${e.who}): ${e.msg} @ ${e.at}${e.times ? ' (repeat ' + e.times + ')' : ''}`;
     case 'error': return `error (${e.who}): ${e.msg} @ ${e.at}${e.times ? ' (repeat ' + e.times + ')' : ''}`;
     case 'config': return 'asar setting changed: ' + e.changed;

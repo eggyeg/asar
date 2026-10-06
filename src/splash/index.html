@@ -31,11 +31,13 @@ body {
 .word { font-size: 22px; font-weight: 700; letter-spacing: -.02em; margin-bottom: 22px; }
 .word span { color: var(--accent); }
 #text { color: var(--muted); font-size: 12.5px; height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
-.bar { width: 170px; height: 4px; border-radius: 4px; background: color-mix(in srgb, var(--text) 10%, transparent); margin-top: 12px; overflow: hidden; opacity: 0; transition: opacity .2s; }
+.bar { --p: 0%; position: relative; width: 190px; height: 4px; border-radius: 4px; background: color-mix(in srgb, var(--text) 10%, transparent); margin-top: 12px; overflow: hidden; opacity: 0; transition: opacity .2s; }
 .bar.on { opacity: 1; }
-.bar i { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--accent); transition: width .25s ease; }
-.bar.indet i { width: 35%; animation: slide 1.1s ease-in-out infinite; }
-@keyframes slide { from { transform: translateX(-110%); } to { transform: translateX(320%); } }
+/* The filled part is clipped to the progress; a soft sheen keeps moving through it so it never looks stuck */
+.bar .fill { position: absolute; inset: 0; clip-path: inset(0 calc(100% - var(--p)) 0 0 round 4px); background: var(--accent); }
+.bar .fill::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 45%; background: linear-gradient(90deg, transparent, rgb(255 255 255 / .38), transparent); transform: translateX(-100%); animation: sheen 1.5s ease-in-out infinite; }
+@keyframes sheen { to { transform: translateX(330%); } }
+.pct { margin-top: 7px; height: 14px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; opacity: .8; }
 .actions { position: absolute; bottom: 14px; left: 0; right: 0; display: flex; justify-content: center; gap: 8px; opacity: 0; pointer-events: none; transition: opacity .25s; }
 .actions.on { opacity: 1; pointer-events: auto; }
 button {
@@ -47,21 +49,22 @@ button {
 button:hover { background: color-mix(in srgb, var(--text) 14%, transparent); }
 button.primary { background: var(--accent); color: #fff; }
 button.primary:hover { filter: brightness(1.1); }
-@media (prefers-reduced-motion: reduce) { .logo path, .bar.indet i { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .logo path, .bar .fill::after { animation: none; } }
 </style>
 </head>
 <body>
 <svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><g transform="translate(0 18)"><path opacity=".35" d="M32 8 56 20 32 32 8 20Z"/></g><g transform="translate(0 9)"><path opacity=".65" d="M32 8 56 20 32 32 8 20Z"/></g><g><path d="M32 8 56 20 32 32 8 20Z"/></g></svg>
 <div class="word">asar<span>.</span></div>
 <div id="text">Starting…</div>
-<div class="bar indet on" id="bar"><i id="fill"></i></div>
+<div class="bar on" id="bar"><div class="fill"></div></div>
+<div class="pct" id="pct"></div>
 <div class="actions" id="actions">
   <button id="skip" class="primary">Skip</button>
   <button id="quit">Quit</button>
 </div>
 <script>
 const $ = id => document.getElementById(id);
-const text = $('text'), bar = $('bar'), fill = $('fill'), actions = $('actions');
+const text = $('text'), bar = $('bar'), pct = $('pct'), actions = $('actions');
 
 $('skip').onclick = () => Splash.skip();
 $('quit').onclick = () => Splash.quit();
@@ -70,38 +73,105 @@ $('quit').onclick = () => Splash.quit();
 let slow = setTimeout(() => actions.classList.add('on'), 6000);
 let countdown;
 
-const label = {
-  'checking-for-updates': 'Checking for updates',
-  'starting': 'Starting',
-  'manual': 'Manual update required'
+// --- One bar for the whole start ---
+// Steps and where they sit on the bar. Between steps the bar follows how long this PC took on its last launches
+// (sent by asar as `plan`). It never passes a step that hasn't happened yet: when a step is late it keeps creeping
+// toward it, and when a step happens the bar catches up. When Discord is ready it fills to 100%.
+const AT = { checked: 20, window: 38, page: 52, dom: 100 };
+const ORDER = [ 'checked', 'window', 'page', 'dom' ];
+let plan = { checked: 900, window: 1900, page: 2600, dom: 4800 };
+let t0 = performance.now(), shift = 0, shown = 0, real = null, done = false, running = false;
+const reached = {};
+
+const expectedAt = t => {
+  const pts = [ [ 0, 0 ], [ plan.checked, AT.checked ], [ plan.window, AT.window ], [ plan.page, AT.page ], [ plan.dom, 98 ] ];
+  const x = t - shift;
+  for (let i = 1; i < pts.length; i++) if (x <= pts[i][0]) {
+    const [ a, pa ] = pts[i - 1], [ b, pb ] = pts[i];
+    return pa + (pb - pa) * Math.max(0, x - a) / Math.max(1, b - a);
+  }
+  return 98;
+};
+const frame = now => {
+  let goal;
+  if (done) goal = 100;
+  else if (real != null) goal = real;
+  else {
+    const next = ORDER.find(k => !reached[k]);
+    const cap = (next ? AT[next] : 100) - 2;
+    const floor = Math.max(0, ...ORDER.filter(k => reached[k]).map(k => AT[k]));
+    const e = expectedAt(now - t0);
+    goal = e < cap ? Math.max(e, floor) : shown + (cap - shown) * 0.006; // late: keep creeping toward the next step
+  }
+  shown = Math.min(100, Math.max(shown, shown + (goal - shown) * (done ? 0.3 : 0.14)));
+  if (done && shown > 99.5) shown = 100;
+  bar.style.setProperty('--p', shown.toFixed(2) + '%');
+  pct.textContent = Math.floor(shown) + '%';
+  if (shown < 100) requestAnimationFrame(frame); else running = false;
+};
+const run = () => { if (!running) { running = true; requestAnimationFrame(frame); } };
+run();
+
+const say = msg => { text.textContent = msg; };
+const step = name => {
+  if (reached[name]) return;
+  reached[name] = true;
+  if (name === 'checked') say('Starting Discord…');
+  if (name === 'window') say('Loading Discord…');
+  if (name === 'page') say('Opening Discord…');
 };
 
-Splash.onState(({ status, current, total, progress, seconds, details }) => {
+const handle = st => {
+  const { status, current, total, progress, seconds } = st;
   clearInterval(countdown);
-  let msg = label[status] ?? status.replaceAll('-', ' ');
-  let determinate = false;
+  bar.classList.toggle('on', status !== 'fail');
 
-  if (status === 'downloading' || status === 'installing') {
-    msg = `${status === 'downloading' ? 'Downloading' : 'Installing'} update ${current} of ${total}`;
-    determinate = true;
-    fill.style.width = Math.max(2, Math.min(100, progress || 0)) + '%';
+  if (status === 'plan') { // asar's timing for this PC, plus what happened before this page loaded
+    if (st.plan) plan = st.plan;
+    t0 = performance.now() - (st.elapsed || 0);
+    for (const [ k, at ] of Object.entries(st.marks || {})) { step(k); shift = at - (plan[k] ?? at); }
+    if (st.last && st.last.status !== 'plan') handle(st.last);
+    return;
   }
+  if (status === 'milestone') {
+    real = null;
+    shift = st.at - (plan[st.name] ?? st.at);
+    step(st.name);
+    return run();
+  }
+  if (status === 'done') { done = true; real = null; say('Ready'); clearTimeout(slow); actions.classList.remove('on'); return run(); }
+
+  if (status === 'asar-update') { // asar's own update, installed now; Discord restarts into it
+    const v = st.version ? ' to ' + st.version.replace(/-[0-9a-f]{7}$/, '') : '';
+    if (st.phase === 'download') { real = AT.checked + (88 - AT.checked) * (st.progress || 0); say('Updating asar' + v + '…'); }
+    if (st.phase === 'install') { real = 94; say('Installing asar update…'); }
+    if (st.phase === 'restart') { done = true; say('Restarting with the update…'); }
+    clearTimeout(slow);
+    actions.classList.remove('on');
+    return run();
+  }
+
+  if (status === 'downloading' || status === 'installing') { // Discord's own updates: real progress
+    const p = Math.max(0, Math.min(100, progress || 0)) / 100;
+    real = status === 'downloading' ? 3 + 15 * p : 18 + 4 * p;
+    say(`${status === 'downloading' ? 'Downloading' : 'Installing'} Discord update ${current} of ${total}`);
+    return run();
+  }
+  if (status === 'checking-for-updates') { real = null; return say('Checking for updates…'); }
+  if (status === 'starting') { real = null; clearTimeout(slow); actions.classList.remove('on'); step('checked'); return run(); }
 
   if (status === 'fail') {
     let s = seconds;
-    msg = `Update failed — retrying in ${s}s`;
-    countdown = setInterval(() => { s = Math.max(0, s - 1); text.textContent = `Update failed — retrying in ${s}s`; }, 1000);
+    say(`Update failed — retrying in ${s}s`);
+    countdown = setInterval(() => { s = Math.max(0, s - 1); say(`Update failed — retrying in ${s}s`); }, 1000);
     actions.classList.add('on');
+    return;
   }
-
-  if (status === 'manual') actions.classList.add('on');
-  if (status === 'starting') { clearTimeout(slow); actions.classList.remove('on'); }
-
-  text.textContent = msg[0].toUpperCase() + msg.slice(1) + (determinate || status === 'fail' ? '' : '…');
-  bar.classList.toggle('indet', !determinate);
-  if (!determinate) fill.style.width = '';
-  bar.classList.toggle('on', status !== 'fail');
-});
+  if (status === 'manual') { say('Manual update required'); actions.classList.add('on'); return; }
+  const msg = String(status).replaceAll('-', ' ');
+  say(msg[0].toUpperCase() + msg.slice(1) + '…');
+};
+Splash.onState(handle);
 </script>
 </body>
 </html>

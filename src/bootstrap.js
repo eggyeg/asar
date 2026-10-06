@@ -28,6 +28,7 @@ const autoStart = require('./autoStart');
 
 const env = k => process.env['ASAR_' + k] ?? process.env['OPENASAR_' + k];
 const debug = require('./debug');
+const upd = require('./asarUpdate');
 
 let desktopCore, mainWindow;
 
@@ -281,11 +282,29 @@ const startCore = () => {
     top: topChannels(),
     hotkey: hotkeyLabel,
     stats: launchStats(),
-    debug: debug.isOn() ? { salt: debug.salt() } : null
+    debug: debug.isOn() ? { salt: debug.salt() } : null,
+    update: upd.state()
   })) + '\n//# sourceURL=asar-injected.js'; // named, so slow frames and errors from asar's code can be told apart from Discord's
 
-  let firstReady = true;
+  // A downloaded update shows a popup in Discord's window
+  // (retried while Discord's page is still loading, so it's never missed)
+  upd.onState(st => {
+    const send = (n = 0) => {
+      const w = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+      if (!w) return n < 8 && setTimeout(() => send(n + 1), 3000);
+      w.webContents.executeJavaScript(`!!window.__asarUpd && (window.__asarUpd(${JSON.stringify(st)}), true)`)
+        .then(ok => { if (!ok && n < 8) setTimeout(() => send(n + 1), 3000); }, () => { if (n < 8) setTimeout(() => send(n + 1), 3000); });
+    };
+    send();
+  });
+
+  let firstReady = true, firstWindow = true;
   app.on('browser-window-created', (e, bw) => {
+    if (firstWindow && bw.resizable) { // Discord's main window: steps for the splash bar
+      firstWindow = false;
+      splash.milestone('window');
+      bw.webContents.once('did-navigate', () => splash.milestone('page'));
+    }
     bw.webContents.on('dom-ready', () => {
       if (!bw.resizable) return; // Main window (and popouts) only - not our splash/config
       if (!mainWindow || mainWindow.isDestroyed()) mainWindow = global.asarMainWindow = bw;
@@ -379,8 +398,15 @@ const startUpdate = () => {
     moduleUpdater.init(Constants.UPDATE_ENDPOINT, buildInfo);
   }
 
-  splash.events.once('APP_SHOULD_LAUNCH', () => {
+  // asar's own update: checked while Discord checks its updates. If one is found (or was downloaded last time), it's
+  // installed on the splash and Discord restarts once; otherwise Discord starts as usual, at most 1.5 s later.
+  const bootCheck = upd.boot();
+  splash.events.once('APP_SHOULD_LAUNCH', async () => {
     asarMark('updates checked');
+    if (!oaConfig.quickstart && !env('QUICKSTART')) {
+      const found = await Promise.race([ bootCheck, new Promise(r => setTimeout(() => r(null), 1500)) ]);
+      if (found && await upd.installAtBoot(found, s => splash.asarUpdate(s))) return; // restarting into the new version
+    }
     if (!env('NOSTART')) startCore();
   });
 
@@ -398,14 +424,7 @@ const startUpdate = () => {
         return app.exit(0);
       }
 
-      if (oaConfig.autoupdate !== false) require('./asarUpdate')().then(r => {
-        log('AsarUpdate', r);
-        debug.ev('update', { result: r });
-        if (!/^Updated/.test(r)) return;
-
-        const { Notification } = require('electron');
-        if (Notification.isSupported()) new Notification({ title: 'asar updated', body: 'Restart Discord to use the new version.' }).show();
-      });
+      upd.schedule(mainWindow); // checks for new asar builds from now on (popup in Discord when one is ready)
 
       try { require('module').flushCompileCache?.(); } catch { }
     }, 3000);

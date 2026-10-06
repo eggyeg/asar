@@ -31,6 +31,13 @@ ipcMain.on('DISCORD_UPDATED_QUOTES', (e, c) => {
 
   if (c && typeof c === 'object' && typeof c.asarFreeze === 'number') return global.asarRecordFreeze?.('page', c.asarFreeze);
 
+  // Update popup: "Restart now" / "Later"
+  if (c && typeof c === 'object' && (c.asarUpd === 'restart' || c.asarUpd === 'later')) {
+    const upd = require('../asarUpdate');
+    debug.ev('update', { result: c.asarUpd === 'restart' ? 'restart now (popup)' : 'later (popup)' });
+    return c.asarUpd === 'restart' ? upd.restart() : upd.dismiss();
+  }
+
   // Debug recorder: a batch of page events (only sent while recording), and startup marks from the page
   if (c && typeof c === 'object' && Array.isArray(c.asarDbg)) return debug.page(c.asarDbg);
   if (c && typeof c === 'object' && Array.isArray(c.asarMark)) {
@@ -107,6 +114,7 @@ ipcMain.on('ci', e => {
     platform: process.platform,
     backup: !!backupPath(),
     updateUrl: require('../asarUpdate').DEFAULT_URL,
+    update: require('../asarUpdate').state(),
     lastUpdate: settings.get('asarLastUpdate'),
     stats: settings.get('asarStats', []),
     diag: global.asarDiag ?? null,
@@ -123,11 +131,13 @@ ipcMain.on('ci', e => {
 
 ipcMain.handle('cu', async () => {
   try {
-    return await require('../asarUpdate')();
+    return await require('../asarUpdate').checkNow();
   } catch (e) {
     return 'Update failed: ' + (e?.message ?? e);
   }
 });
+
+ipcMain.on('cy', () => require('../asarUpdate').restart()); // restart into a downloaded update
 
 ipcMain.handle('ck', async () => { // Repair caches: deleted on next start, before Chromium opens them
   settings.set('asarClearCaches', [ 'gpu', 'code', 'http' ]);

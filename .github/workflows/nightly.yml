@@ -91,7 +91,14 @@ jobs:
       run: |
         # asar self-updates from raw.githubusercontent.com/rottenvia/asar/build/app.asar
         SHA=$(git rev-parse --short=7 HEAD)
-        mkdir publish && cp app.asar publish/ && cd publish
+        mkdir publish && cp app.asar publish/ && cp release-notes.json publish/notes.tmp && cd publish
+        # version.json: what asar checks every 20 minutes (with its ETag, so an unchanged file costs a 304)
+        node -e "
+          const fs = require('fs'), b = fs.readFileSync('app.asar');
+          const version = /asarVersion=\"([^\"]+)\"/.exec(b.toString('latin1'))[1];
+          const sha256 = require('crypto').createHash('sha256').update(b).digest('hex');
+          fs.writeFileSync('version.json', JSON.stringify({ version, sha256, size: b.length, date: new Date().toISOString(), notes: JSON.parse(fs.readFileSync('notes.tmp', 'utf8')) }, null, 1));
+          fs.rmSync('notes.tmp');"
         printf '# asar build\n\nLatest app.asar, built from %s by CI. See the main branch for source.\n' "$SHA" > README.md
         git init -q -b build
         git config user.name "github-actions[bot]"

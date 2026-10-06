@@ -26,9 +26,15 @@ exports.initSplash = (startMin) => {
 };
 
 exports.focusWindow = () => win?.focus?.();
-exports.pageReady = () => destroySplash() || process.nextTick(() => events.emit('APP_SHOULD_SHOW'));
+// Discord's window is ready: the bar fills up, then the splash closes
+exports.pageReady = () => {
+  const first = win && !('dom' in marks);
+  if (first) { exports.milestone('dom'); saveTimes(); sendState('done'); }
+  destroySplash(first ? 260 : 100);
+  process.nextTick(() => events.emit('APP_SHOULD_SHOW'));
+};
 
-const destroySplash = () => {
+const destroySplash = (delay = 100) => {
   win?.setSkipTaskbar?.(true);
 
   setTimeout(() => {
@@ -37,21 +43,51 @@ const destroySplash = () => {
     win.hide();
     win.close();
     win = null;
-  }, 100);
+  }, delay);
 };
+
+// --- Startup timing for the splash bar ---
+// Each launch records when its steps happened (ms after the splash opened); the bar follows the median of the last 5
+// launches, so it moves at the speed Discord actually starts on this PC and fills up when Discord is ready.
+const T0 = { at: 0 }, marks = {};
+let unusual = false; // updates were installed this launch: its times aren't typical
+const plan = () => {
+  const list = (settings.get('asarBootTimes') ?? []).filter(x => x && typeof x === 'object');
+  const med = k => { const v = list.map(x => x[k]).filter(n => n >= 0).sort((a, b) => a - b); return v.length ? v[Math.floor(v.length / 2)] : null; };
+  return { checked: med('checked') ?? 900, window: med('window') ?? 1900, page: med('page') ?? 2600, dom: med('dom') ?? 4800 };
+};
+exports.milestone = name => {
+  if (!T0.at || name in marks) return;
+  marks[name] = Date.now() - T0.at;
+  sendState('milestone', { name, at: marks[name] });
+};
+const saveTimes = () => {
+  if (unusual || !('checked' in marks) || !('dom' in marks)) return;
+  try {
+    const prev = settings.get('asarBootTimes');
+    settings.set('asarBootTimes', [ ...(Array.isArray(prev) ? prev : []), { ...marks } ].slice(-5));
+    settings.save();
+  } catch { }
+};
+// asar's own update, installed on the splash (download progress, installing, restarting)
+exports.asarUpdate = s => { unusual = true; sendState('asar-update', s); };
 
 const launchMain = () => {
   moduleUpdater.events.removeAllListeners(); // Remove updater v1 listeners
 
   if (!launched && win != null) {
     sendState('starting');
+    exports.milestone('checked');
 
     launched = true;
     events.emit('APP_SHOULD_LAUNCH');
   }
 };
 
+let lastState = null;
 const sendState = (status, s = {}) => {
+  if (status !== 'milestone') lastState = { status, ...s };
+  if (status === 'downloading' || status === 'installing') unusual = true;
   try {
     win.webContents.send('state', { status, ...s });
   } catch { }
@@ -63,6 +99,12 @@ const launchSplash = (startMin) => {
     width: 300,
     height: process.platform === 'darwin' ? 300 : 350
   }, 'splash');
+
+  T0.at = Date.now();
+  // The page missed what happened before it loaded: send the plan, the steps so far and the latest state
+  win.webContents.once('did-finish-load', () => {
+    try { win.webContents.send('state', { status: 'plan', plan: plan(), elapsed: Date.now() - T0.at, marks: { ...marks }, last: lastState }); } catch { }
+  });
 
   if (process.platform !== 'darwin') win.on('closed', () => !launched && app.quit());
 
