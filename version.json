@@ -1,0 +1,12 @@
+{
+ "version": "1.11.0-d648434",
+ "sha256": "082cd368be143fd937c9412bb9c0af52d8d5a8f4bf8188bf676b36ee89ba5226",
+ "size": 239999,
+ "date": "2026-10-06T19:24:57.379Z",
+ "notes": [
+  "Updates show a popup in Discord: restart now or later",
+  "\"Later\" tucks it into a small Update button in the top bar",
+  "Updates found at startup install on the splash",
+  "The startup bar follows real progress and fills up"
+ ]
+}
