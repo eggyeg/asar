@@ -520,68 +520,163 @@ if (cfg.prefetch) {
   }, { capture: true, passive: true });
 }
 
-// --- Loading indicator ---
-// A small asar pill at the top of the window, shown only if a channel or thread isn't on screen within 120 ms of the
-// click (instant switches show nothing). One element, its own scoped styles; nothing site-wide.
-let loader = null, loaderTimer = 0;
-const loaderEl = () => {
-  if (loader?.isConnected) return loader;
-  if (!document.getElementById('asar-loader-css')) addStyle('asar-loader-css', `
-#asar-loader{position:fixed;top:44px;left:50%;transform:translateX(-50%);z-index:2147483646;pointer-events:none;display:flex;align-items:center;gap:8px;padding:6px 12px 6px 10px;border-radius:999px;font:500 13px/1.2 var(--font-primary,system-ui,sans-serif);color:var(--text-default,var(--text-normal,#dbdee1));background:var(--background-floating,#111214);box-shadow:0 4px 16px rgb(0 0 0/.35);opacity:0;transition:opacity .12s}
-#asar-loader.on{opacity:1}
-#asar-loader i{width:12px;height:12px;border-radius:50%;border:2px solid color-mix(in srgb,var(--brand-500,#8b7bff) 30%,transparent);border-top-color:var(--brand-500,#8b7bff);animation:asar-spin .7s linear infinite}
-#asar-loader b{font-weight:600}
-@keyframes asar-spin{to{transform:rotate(360deg)}}`);
-  loader = document.createElement('div');
-  loader.id = 'asar-loader';
-  loader.setAttribute('role', 'status');
-  loader.innerHTML = '<i></i><span></span>';
-  document.body.appendChild(loader);
-  return loader;
-};
-const showLoader = cid => {
-  const el = loaderEl();
-  let name = '';
-  try { name = perfMods.channels?.getChannel?.(cid)?.name ?? ''; } catch { }
-  const span = el.querySelector('span');
-  span.textContent = 'Loading ';
-  const b = document.createElement('b');
-  b.textContent = name ? (/^\d/.test(name) ? name : '#' + name) : 'channel';
-  span.append(b, '…');
-  el.classList.add('on');
-};
-const hideLoader = () => { clearTimeout(loaderTimer); loader?.classList.remove('on'); };
+// --- Loading screen ---
+// Covers the message area (where channels, threads and DMs show) with a calm skeleton while a channel loads.
+// Shown only if the channel isn't on screen within 120 ms, so instant switches show nothing. Lives outside Discord's
+// React tree (fixed over the chat's box), one shimmer animation on a single layer, styles scoped to #asar-load.
+const LOAD_CSS = `
+#asar-load{position:fixed;z-index:2147483646;pointer-events:none;overflow:hidden;contain:strict;opacity:0;transition:opacity .16s ease;
+ background:var(--background-base-lower,var(--background-primary,#1a1a1e));font-family:var(--font-primary,system-ui,sans-serif)}
+#asar-load.on{opacity:1}
+#asar-load .hd{display:flex;align-items:center;gap:10px;padding:24px 32px 10px}
+#asar-load .hd i{width:14px;height:14px;flex:none;border-radius:50%;border:2px solid color-mix(in srgb,var(--brand-500,#8b7bff) 28%,transparent);border-top-color:var(--brand-500,#8b7bff);animation:asar-spin .75s linear infinite}
+#asar-load .hd b{font-weight:600;font-size:15px;color:var(--text-strong,var(--header-primary,#f2f3f5));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#asar-load .hd span{font-size:13px;color:var(--text-muted,#949ba4);white-space:nowrap}
+#asar-load ul{list-style:none;margin:0;padding:14px 32px;display:grid;gap:26px}
+#asar-load li{display:grid;grid-template-columns:40px minmax(0,1fr);gap:16px}
+#asar-load .av{width:40px;height:40px;border-radius:50%}
+#asar-load .tx{display:grid;gap:9px;padding-top:3px}
+#asar-load .ln{height:10px;border-radius:5px}
+#asar-load .ln.nm{height:11px}
+#asar-load .av,#asar-load .ln{background:color-mix(in srgb,var(--text-default,var(--text-normal,#dbdee1)) 8%,transparent)}
+#asar-load .ln.nm{background:color-mix(in srgb,var(--text-default,var(--text-normal,#dbdee1)) 13%,transparent)}
+#asar-load .sh{position:absolute;inset:0;will-change:transform;transform:translateX(-100%);animation:asar-sweep 1.25s cubic-bezier(.4,0,.2,1) infinite;
+ background:linear-gradient(100deg,transparent 35%,color-mix(in srgb,var(--text-default,#fff) 4.5%,transparent) 50%,transparent 65%)}
+@keyframes asar-spin{to{transform:rotate(360deg)}}
+@keyframes asar-sweep{to{transform:translateX(100%)}}`;
 
-// Channel switch timing: from clicking a channel to its first message being on screen. Shown in asar settings.
+let loadEl = null, loadFor = null;
+const rnd = seed => () => (seed = (seed * 16807) % 2147483647) / 2147483647; // stable widths per channel
+const buildLoad = cid => {
+  if (!document.getElementById('asar-load-css')) addStyle('asar-load-css', LOAD_CSS);
+  if (!loadEl?.isConnected) {
+    loadEl = document.createElement('div');
+    loadEl.id = 'asar-load';
+    loadEl.setAttribute('role', 'status');
+    loadEl.setAttribute('aria-live', 'polite');
+    document.body.appendChild(loadEl);
+  }
+  const r = rnd(Number(String(cid).slice(-9)) || 7);
+  let rows = '';
+  for (let i = 0; i < 8; i++) {
+    const lines = 1 + Math.floor(r() * 2.2);
+    let tx = `<div class="ln nm" style="width:${14 + Math.round(r() * 14)}%"></div>`;
+    for (let j = 0; j < lines; j++) tx += `<div class="ln" style="width:${35 + Math.round(r() * 55)}%"></div>`;
+    rows += `<li><div class="av"></div><div class="tx">${tx}</div></li>`;
+  }
+  loadEl.innerHTML = `<div class="hd"><i></i><b></b><span>Loading messages…</span></div><ul>${rows}</ul><div class="sh"></div>`;
+  let name = '', type = 0;
+  try { const ch = perfMods.channels?.getChannel?.(cid); name = ch?.name ?? ''; type = ch?.type ?? 0; } catch { }
+  loadEl.querySelector('b').textContent = name ? ((type === 1 || type === 3) ? name : (type >= 10 && type <= 12 ? '› ' : '#') + name) : 'Opening channel';
+};
+
+// Where the messages are drawn: Discord's chat <main>; fallback: everything right of the channel list, below the header
+const chatRect = () => {
+  const list = document.querySelector('ol[data-list-id="chat-messages"]');
+  const box = list?.closest('main') ?? document.querySelector('main[class*="chatContent"]') ?? document.querySelector('[class*="chatContent"]');
+  const b = box?.getBoundingClientRect();
+  if (b && b.width > 200 && b.height > 150) return b;
+  const nav = document.querySelector('a[href^="/channels/"]')?.closest('nav')?.getBoundingClientRect();
+  if (!nav) return null;
+  return { left: nav.right, top: nav.top + 48, width: innerWidth - nav.right, height: innerHeight - nav.top - 48 };
+};
+
+const placeLoad = () => {
+  const b = loadEl && chatRect();
+  if (!b) return false;
+  Object.assign(loadEl.style, { left: b.left + 'px', top: b.top + 'px', width: b.width + 'px', height: b.height + 'px' });
+  return true;
+};
+const showLoad = cid => {
+  buildLoad(cid);
+  if (!placeLoad()) return;
+  loadFor = cid;
+  requestAnimationFrame(() => loadEl?.classList.add('on'));
+};
+const hideLoad = () => { loadFor = null; loadEl?.classList.remove('on'); };
+addEventListener('resize', () => { if (loadFor) placeLoad(); }, { passive: true });
+
+// A channel counts as ready when its first message is on screen, or Discord says it's loaded and empty
+const isReady = cid => {
+  if (document.querySelector('li[id^="chat-messages-' + cid + '-"]')) return true;
+  try { const cm = perfMods.messages?.getMessages?.(cid); if (cm && cm.ready && cm.length === 0) return true; } catch { }
+  return false;
+};
+
+// --- Navigation tracking (channel switch timing + loading screen) ---
+// Any way of opening a channel counts: channel/thread links, DMs, server icons, jump links.
 diag.switches = [];
-document.addEventListener('click', e => {
-  const a = e.target?.closest?.('a[href^="/channels/"]');
-  const cid = a && channelIdOf(a);
-  if (!cid) return;
-  clearTimeout(hoverTimer); // the click loads it now; a hover preload would only duplicate that
-  const warm = prefetched.has(cid);
-  if (!warm) prefetched.set(cid, Date.now());
+let navId = 0;
+const cidFromPath = p => /^\/channels\/(?:@me|\d+)\/(\d+)/.exec(p)?.[1];
+const startNav = (cid, warm) => {
+  const id = ++navId;
+  hideLoad();
   const t0 = performance.now();
-  const sel = 'li[id^="chat-messages-' + cid + '-"]';
-  const gid = /^\/channels\/(@me|\d+)\//.exec(a.getAttribute('href'))?.[1];
-  try { DiscordNative.ipc.send('DISCORD_UPDATED_QUOTES', { asarVisit: { c: cid, g: gid } }); } catch { }
-
-  hideLoader();
-  if (cfg.loader) loaderTimer = setTimeout(() => { if (!document.querySelector(sel)) showLoader(cid); }, 120);
-  const mine = loaderTimer;
+  const showAt = setTimeout(() => { if (id === navId && cfg.loader && !isReady(cid)) showLoad(cid); }, 120);
   const poll = () => {
+    if (id !== navId) return clearTimeout(showAt); // another navigation took over
     const ms = performance.now() - t0;
-    if (document.querySelector(sel)) {
-      if (loaderTimer === mine) hideLoader();
+    if (isReady(cid)) {
+      clearTimeout(showAt);
+      // let the first frame of messages paint before fading out
+      requestAnimationFrame(() => requestAnimationFrame(() => { if (id === navId) hideLoad(); }));
       diag.switches.push({ ms: Math.round(ms), warm });
       if (diag.switches.length > 30) diag.switches.shift();
       return report();
     }
-    if (ms < 10000) setTimeout(poll, 40);
-    else if (loaderTimer === mine) hideLoader(); // empty channel or something else: never leave the pill up
+    if (ms < 8000) setTimeout(poll, 40);
+    else hideLoad(); // never leave it up
   };
   setTimeout(poll, 0);
+};
+
+document.addEventListener('click', e => {
+  const a = e.target?.closest?.('a[href^="/channels/"]');
+  const cid = a && channelIdOf(a);
+  if (cid) {
+    clearTimeout(hoverTimer); // the click loads it now; a hover preload would only duplicate that
+    const warm = prefetched.has(cid);
+    if (!warm) prefetched.set(cid, Date.now());
+    const gid = /^\/channels\/(@me|\d+)\//.exec(a.getAttribute('href'))?.[1];
+    try { DiscordNative.ipc.send('DISCORD_UPDATED_QUOTES', { asarVisit: { c: cid, g: gid } }); } catch { }
+    if (location.pathname.endsWith('/' + cid)) return; // already there
+    return startNav(cid, warm);
+  }
+  // Not a channel link (server icon, DM, jump button...): see if the click navigated somewhere
+  const before = location.pathname, id = navId;
+  for (const t of [ 40, 140, 320 ]) setTimeout(() => {
+    if (navId !== id || location.pathname === before) return;
+    const c = cidFromPath(location.pathname);
+    if (c && c !== cidFromPath(before)) startNav(c, prefetched.has(c));
+  }, t);
 }, { capture: true, passive: true });
+addEventListener('keydown', e => { if (e.key === 'Escape') hideLoad(); }, { capture: true, passive: true });
+
+// --- Free memory in the background ---
+// After Discord has been hidden (minimized, or covered by a game) for 2 minutes, ask Discord to release memory it
+// doesn't need, using its own DiscordNative.processUtils.purgeMemory (garbage collection + Chromium caches). At most
+// every 30 minutes, never while you're looking at Discord.
+if (cfg.memTrim) {
+  let hiddenAt = document.hidden ? Date.now() : 0, trimmedAt = 0;
+  diag.mem = { trims: 0, freedMB: 0 };
+  document.addEventListener('visibilitychange', () => { hiddenAt = document.hidden ? Date.now() : 0; });
+  const heapMB = () => (performance.memory?.usedJSHeapSize ?? 0) / 1048576;
+  setInterval(() => {
+    if (!hiddenAt || Date.now() - hiddenAt < 120000 || Date.now() - trimmedAt < 1800000) return;
+    const purge = window.DiscordNative?.processUtils?.purgeMemory;
+    if (typeof purge !== 'function') return;
+    trimmedAt = Date.now();
+    const before = heapMB();
+    try { purge(); } catch { return; }
+    setTimeout(() => {
+      const freed = Math.max(0, before - heapMB());
+      diag.mem.trims++;
+      diag.mem.freedMB = Math.round(diag.mem.freedMB + freed);
+      diag.mem.lastMB = Math.round(freed);
+      report();
+    }, 8000);
+  }, 30000);
+}
 
 // Clicking the asar tab always opens the window, even when the tab is already selected (Discord doesn't re-render then)
 document.addEventListener('click', e => {

@@ -267,6 +267,7 @@ const startCore = () => {
     prefetch: oaConfig.prefetch !== false && !pure && !oaConfig.safeMode,
     keepReady: oaConfig.keepReady !== false && !pure && !oaConfig.safeMode,
     loader: oaConfig.loader !== false && !pure,
+    memTrim: oaConfig.memTrim !== false && !pure && !oaConfig.safeMode,
     top: topChannels(),
     hotkey: hotkeyLabel,
     stats: launchStats()

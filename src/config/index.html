@@ -214,7 +214,8 @@ body:has(.bar.on) .content { padding-bottom: 72px; }
       <h3>Speed-ups</h3>
       <div class="row"><div class="t"><b>Preload channels on hover</b><span>When your mouse rests on a channel, its messages start loading before you click.</span></div><label class="sw"><input type="checkbox" data-k="prefetch" data-d="true"><i></i></label></div>
       <div class="row"><div class="t"><b>Keep top channels ready</b><span>The channels you open most (top 4 in the server you're in, up to 10 total) load in the background, one every 0.8 s, so clicking them is instant.</span></div><label class="sw"><input type="checkbox" data-k="keepReady" data-d="true"><i></i></label></div>
-      <div class="row"><div class="t"><b>Loading indicator</b><span>Shows a small “Loading #channel” pill if a channel or thread takes longer than 0.1 s to appear.</span></div><label class="sw"><input type="checkbox" data-k="loader" data-d="true"><i></i></label></div>
+      <div class="row"><div class="t"><b>Loading screen</b><span>If a channel, thread or DM takes longer than 0.1 s, its message area shows a calm loading screen until the messages are there.</span></div><label class="sw"><input type="checkbox" data-k="loader" data-d="true"><i></i></label></div>
+      <div class="row"><div class="t"><b>Free memory in the background</b><span>After Discord has been minimized or behind a game for 2 minutes, it releases memory it doesn't need (at most every 30 min).</span></div><label class="sw"><input type="checkbox" data-k="memTrim" data-d="true"><i></i></label></div>
       <div class="row"><div class="t"><b>Warm up connections</b><span>Keeps connections to Discord's servers open, so the first messages and images after a click don't wait on a new connection.</span></div><label class="sw"><input type="checkbox" data-k="warmup" data-d="true"><i></i></label></div>
       <div class="row"><div class="t"><b>Faster screen-share picker</b><span>Window and screen previews are made at the size the picker shows, and not re-captured more than every 1.5 s.</span></div><label class="sw"><input type="checkbox" data-k="pickerTune" data-d="true"><i></i></label></div>
       <h3>Feel</h3>
@@ -433,6 +434,8 @@ if (info.hwAccel === false) $('hwbox').hidden = false;
     lines.push(`Loaded ahead: <b>${kept}</b> top channel${kept === 1 ? '' : 's'} kept ready · <b>${hover}</b> on hover · ${pf.skipped} already loaded` + (pf.failed ? ` · ${pf.failed} failed` : ''));
   }
   else if (info.diag && info.diag.prefetchReady === false) lines.push('Preloading is waiting for Discord to finish loading.');
+  const mm = info.diag?.mem;
+  if (mm?.trims) lines.push(`Background memory cleanup: <b>${mm.trims}</b> time${mm.trims === 1 ? '' : 's'}, freed about <b>${mm.freedMB} MB</b>`);
   if (pk?.calls) lines.push(`Screen picker: ${pk.calls} preview request${pk.calls === 1 ? '' : 's'}, <b>${pk.calls - pk.captures}</b> served instantly · Discord asked for ${String(pk.requested).replace(/[^\w ()x.]/g, '')}, made at ${String(pk.used).replace(/[^\w ()x.]/g, '')}` + (pk.captures ? ` · ${Math.round(pk.totalMs / pk.captures)} ms per capture` : ''));
   if (lines.length) $('live').innerHTML = lines.join('<br>');
 }
