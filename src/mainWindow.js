@@ -224,7 +224,8 @@ const patchSettings = () => {
   const wrapped = function (...args) {
     const layout = orig.apply(this, args);
     diag.builds++;
-    setTimeout(versionLine, 400); // settings are opening: add the version line too
+    (window.requestIdleCallback ?? setTimeout)(() => versionLine(), { timeout: 1500 }); // settings are opening: add the version line when idle
+    settingsBuilt();
     try {
       if (Array.isArray(layout) && !layout.some(s => s?.key === 'asar_section')) {
         let i = layout.findIndex(s => s?.key === 'games_and_apps_section');
@@ -248,12 +249,14 @@ const patchSettings = () => {
 // Discord downloads its settings code early but only runs it the first time settings opens, then builds the menu.
 // Wrap every not-yet-run module that mentions "$Root" (like BetterDiscord does for all modules) so the root is
 // patched the instant its module runs, before the menu is built. Also hook chunks that arrive later.
+const rootSrc = new Map(); // module id -> source, for modules that build Discord's settings
 const wrapFactory = (mods, id, onDone) => {
   const f = mods[id];
   if (typeof f !== 'function' || f.__asar) return;
   let src;
   try { src = Function.prototype.toString.call(f); } catch { return; }
   if (!src.includes('$Root')) return;
+  rootSrc.set(id, src);
 
   const w = function () {
     try { return f.apply(this, arguments); }
@@ -413,12 +416,16 @@ try {
 // When the pointer rests on a channel link for 150 ms, ask Discord to fetch that channel's messages (the same call it
 // makes when you click), so they're usually there by the time you click. Conservative: text-type channels only,
 // channels Discord hasn't loaded yet, at most one request per 500 ms, each channel at most once per 2 minutes.
-const perfMods = { actions: null, messages: null, channels: null };
+const perfMods = { actions: null, messages: null, channels: null, users: null, router: null };
 const perfScanned = new Set();
+let perfScans = 0;
 const findPerf = () => {
-  if (perfMods.actions && perfMods.messages && perfMods.channels) return true;
+  const core = () => !!(perfMods.actions && perfMods.messages && perfMods.channels);
+  // Optional extras (user names, settings router) are only looked for a few times; never a cost on every hover
+  if (core() && ((perfMods.users && perfMods.router) || perfScans >= 3)) return true;
   const cache = getReq()?.c;
   if (!cache) return false;
+  perfScans++;
   const look = v => {
     if (!v || (typeof v !== 'object' && typeof v !== 'function')) return;
     if (!perfMods.actions && typeof v.fetchMessages === 'function' && typeof v.sendMessage === 'function') perfMods.actions = v;
@@ -426,7 +433,9 @@ const findPerf = () => {
       const n = v.getName();
       if (n === 'MessageStore' && !perfMods.messages) perfMods.messages = v;
       else if (n === 'ChannelStore' && !perfMods.channels) perfMods.channels = v;
+      else if (n === 'UserStore' && !perfMods.users) perfMods.users = v;
     }
+    else if (!perfMods.router && typeof v.openUserSettings === 'function' && 'USER_SETTINGS_MODAL_KEY' in v) perfMods.router = v;
   };
   for (const id in cache) {
     if (perfScanned.has(id)) continue;
@@ -437,9 +446,10 @@ const findPerf = () => {
       if (typeof ex === 'object' || typeof ex === 'function') for (const k of Object.keys(ex)) look(ex[k]);
       perfScanned.add(id);
     } catch { }
-    if (perfMods.actions && perfMods.messages && perfMods.channels) break;
+    if (perfMods.actions && perfMods.messages && perfMods.channels && perfMods.users && perfMods.router) break;
   }
-  diag.prefetchReady = !!(perfMods.actions && perfMods.messages && perfMods.channels);
+  diag.prefetchReady = core();
+  if (perfMods.router) wrapRouter();
   return diag.prefetchReady;
 };
 
@@ -528,10 +538,33 @@ const LOAD_CSS = `
 #asar-load{position:fixed;z-index:2147483646;pointer-events:none;overflow:hidden;contain:strict;opacity:0;transition:opacity .16s ease;
  background:var(--background-base-lower,var(--background-primary,#1a1a1e));font-family:var(--font-primary,system-ui,sans-serif)}
 #asar-load.on{opacity:1}
-#asar-load .hd{display:flex;align-items:center;gap:10px;padding:24px 32px 10px}
-#asar-load .hd i{width:14px;height:14px;flex:none;border-radius:50%;border:2px solid color-mix(in srgb,var(--brand-500,#8b7bff) 28%,transparent);border-top-color:var(--brand-500,#8b7bff);animation:asar-spin .75s linear infinite}
-#asar-load .hd b{font-weight:600;font-size:15px;color:var(--text-strong,var(--header-primary,#f2f3f5));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#asar-load .hd span{font-size:13px;color:var(--text-muted,#949ba4);white-space:nowrap}
+#asar-load .hd{display:flex;align-items:center;gap:12px;padding:22px 32px 8px}
+#asar-load .sp{width:16px;height:16px;flex:none;border-radius:50%;border:2px solid color-mix(in srgb,var(--brand-500,#8b7bff) 26%,transparent);border-top-color:var(--brand-500,#8b7bff);animation:asar-spin .75s linear infinite}
+#asar-load .tt{display:grid;gap:3px;min-width:0}
+#asar-load .tt b{font-weight:600;font-size:15px;color:var(--text-strong,var(--header-primary,#f2f3f5));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#asar-load .st{font-size:13px;line-height:16px;height:16px;color:var(--text-muted,#949ba4);white-space:nowrap}
+#asar-load .st span{display:inline-block}
+#asar-load .dots span{width:.42em;opacity:0}
+#asar-load .dots span:nth-child(1){animation:asar-d1 2.4s infinite}
+#asar-load .dots span:nth-child(2){animation:asar-d2 2.4s infinite}
+#asar-load .dots span:nth-child(3){animation:asar-d3 2.4s infinite}
+@keyframes asar-d1{0%,12%{opacity:0}12.5%,74%{opacity:1}75%,100%{opacity:0}}
+@keyframes asar-d2{0%,24%{opacity:0}25%,61%{opacity:1}62%,100%{opacity:0}}
+@keyframes asar-d3{0%,37%{opacity:0}37.5%,49%{opacity:1}50%,100%{opacity:0}}
+#asar-load .wave span{animation:asar-wave 1.3s ease-in-out infinite;animation-delay:calc(var(--i)*90ms)}
+@keyframes asar-wave{0%,60%,100%{transform:none;opacity:.55}30%{transform:translateY(-3px);opacity:1;color:var(--text-default,var(--text-normal,#dbdee1))}}
+#asar-load .wave span.sep{animation:none;opacity:.35;padding:0 .12em}
+#asar-load .type span{opacity:0;animation:asar-type 2.8s infinite;animation-delay:calc(var(--i)*65ms)}
+#asar-load .type u{text-decoration:none;display:inline-block;margin-left:1px;width:1px;height:13px;vertical-align:-2px;background:currentColor;animation:asar-caret .9s steps(1) infinite}
+@keyframes asar-type{0%{opacity:0}3%,70%{opacity:1}74%,100%{opacity:0}}
+@keyframes asar-caret{50%{opacity:0}}
+#asar-load .shim{color:transparent;-webkit-background-clip:text;background-clip:text;background-size:240% 100%;animation:asar-shim 1.7s linear infinite;
+ background-image:linear-gradient(90deg,var(--text-muted,#949ba4) 0%,var(--text-muted,#949ba4) 38%,var(--text-strong,#fff) 50%,var(--text-muted,#949ba4) 62%,var(--text-muted,#949ba4) 100%)}
+@keyframes asar-shim{from{background-position:100% 0}to{background-position:0 0}}
+#asar-load.full{display:grid;place-items:center}
+#asar-load.full .hd{padding:0;flex-direction:column;gap:14px;text-align:center}
+#asar-load.full .sp{width:22px;height:22px}
+#asar-load.full .tt{justify-items:center}
 #asar-load ul{list-style:none;margin:0;padding:14px 32px;display:grid;gap:26px}
 #asar-load li{display:grid;grid-template-columns:40px minmax(0,1fr);gap:16px}
 #asar-load .av{width:40px;height:40px;border-radius:50%}
@@ -564,11 +597,52 @@ const buildLoad = cid => {
     for (let j = 0; j < lines; j++) tx += `<div class="ln" style="width:${35 + Math.round(r() * 55)}%"></div>`;
     rows += `<li><div class="av"></div><div class="tx">${tx}</div></li>`;
   }
-  loadEl.innerHTML = `<div class="hd"><i></i><b></b><span>Loading messages…</span></div><ul>${rows}</ul><div class="sh"></div>`;
-  let name = '', type = 0;
-  try { const ch = perfMods.channels?.getChannel?.(cid); name = ch?.name ?? ''; type = ch?.type ?? 0; } catch { }
-  loadEl.querySelector('b').textContent = name ? ((type === 1 || type === 3) ? name : (type >= 10 && type <= 12 ? '› ' : '#') + name) : 'Opening channel';
+  const d = describe(cid);
+  loadEl.className = '';
+  loadEl.innerHTML = `<div class="hd"><div class="sp"></div><div class="tt"><b></b>${statusHTML(d.kind)}</div></div><ul>${rows}</ul><div class="sh"></div>`;
+  loadEl.querySelector('b').textContent = d.title;
 };
+
+// What's being opened, in words: DMs are chats, not channels
+const userName = id => {
+  try { const u = perfMods.users?.getUser?.(id); return u?.globalName || u?.global_name || u?.username || ''; } catch { return ''; }
+};
+const describe = cid => {
+  let ch = null;
+  try { ch = perfMods.channels?.getChannel?.(cid); } catch { }
+  const dmPath = location.pathname.startsWith('/channels/@me') || pendingDM === cid;
+  const type = ch?.type ?? (dmPath ? 1 : 0);
+  const recips = ch?.recipients ?? ch?.rawRecipients?.map(r => r.id) ?? [];
+  if (type === 1) {
+    const n = ch?.name || userName(recips[0]);
+    return { kind: 'chat', title: n ? 'Chat with ' + n : 'Opening chat' };
+  }
+  if (type === 3) {
+    const n = ch?.name || recips.slice(0, 3).map(userName).filter(Boolean).join(', ');
+    return { kind: 'chat', title: n || 'Group chat' };
+  }
+  if (type >= 10 && type <= 12) return { kind: 'thread', title: ch?.name ? '› ' + ch.name : 'Opening thread' };
+  return { kind: 'channel', title: ch?.name ? '#' + ch.name : 'Opening channel' };
+};
+
+// Animated status line under the title, a different style each time: cycling dots, a letter wave, typing, shimmer
+let styleTurn = Math.floor(Math.random() * 4);
+const letters = (word, cls) => [ ...word ].map((c, i) => `<span${c === '-' ? ' class="sep"' : ''} style="--i:${i}">${c === ' ' ? '&nbsp;' : c}</span>`).join('');
+const PHRASES = {
+  chat: { dots: 'Loading chat', type: 'Opening your chat', shim: 'Fetching your messages' },
+  thread: { dots: 'Loading thread', type: 'Catching up', shim: 'Fetching replies' },
+  channel: { dots: 'Loading messages', type: 'Catching up', shim: 'Fetching messages' },
+  settings: { dots: 'Loading settings', type: 'Getting things ready', shim: 'Preparing settings' }
+};
+const statusHTML = kind => {
+  const p = PHRASES[kind] ?? PHRASES.channel;
+  const style = styleTurn++ % 4;
+  if (style === 0) return `<div class="st dots">${p.dots}<span>.</span><span>.</span><span>.</span></div>`;
+  if (style === 1) return `<div class="st wave">${letters('l-o-a-d-i-n-g')}</div>`;
+  if (style === 2) return `<div class="st type">${letters(p.type)}<u></u></div>`;
+  return `<div class="st shim">${p.shim}</div>`;
+};
+let pendingDM = null;
 
 // Where the messages are drawn: Discord's chat <main>; fallback: everything right of the channel list, below the header
 const chatRect = () => {
@@ -716,6 +790,7 @@ if (cfg.instantSwitch) document.addEventListener('click', e => {
   const rapid = now - lastSwitchClick < 450;
   lastSwitchClick = now;
 
+  pendingDM = a.getAttribute('href').startsWith('/channels/@me/') ? cid : null;
   try {
     showBar(); // also loads the .asar-pending style
     a.classList.add('asar-pending');
@@ -762,14 +837,118 @@ if (cfg.memTrim) {
   }, 30000);
 }
 
+// --- Faster Discord settings ---
+// 1. Prepare: while Discord is idle, run the code that builds Discord's settings and download the pieces it loads
+//    on first open, so opening settings doesn't have to do that work while you wait.
+// 2. Feedback: if Discord's openUserSettings can be wrapped, "Opening settings" appears straight away and settings
+//    open one frame later (the same idea as instant switching).
+// 3. Measure: how long settings take from your click until they're on screen (asar settings > Performance).
+let lastInputAt = 0;
+addEventListener('pointerdown', e => { if (e.isTrusted) lastInputAt = performance.now(); }, { capture: true, passive: true });
+addEventListener('keydown', e => { if (e.isTrusted) lastInputAt = performance.now(); }, { capture: true, passive: true });
+
+diag.settingsOpen = [];
+let settingsT0 = 0;
+const settingsBuilt = () => {
+  const t0 = settingsT0 || (performance.now() - lastInputAt < 3000 ? lastInputAt : 0);
+  settingsT0 = 0;
+  if (!t0) return;
+  const poll = () => {
+    const ms = performance.now() - t0;
+    if (document.querySelector('[data-asar-icon]')) {
+      hideSettingsLoad();
+      diag.settingsOpen.push({ ms: Math.round(ms), first: diag.settingsOpen.length === 0 });
+      if (diag.settingsOpen.length > 10) diag.settingsOpen.shift();
+      return report();
+    }
+    if (ms < 6000) setTimeout(poll, 50);
+    else hideSettingsLoad();
+  };
+  setTimeout(poll, 0);
+};
+
+const showSettingsLoad = () => {
+  if (!document.getElementById('asar-load-css')) addStyle('asar-load-css', LOAD_CSS);
+  if (!loadEl?.isConnected) {
+    loadEl = document.createElement('div');
+    loadEl.id = 'asar-load';
+    loadEl.setAttribute('role', 'status');
+    document.body.appendChild(loadEl);
+  }
+  loadEl.className = 'full';
+  loadEl.innerHTML = `<div class="hd"><div class="sp"></div><div class="tt"><b>Opening settings</b>${statusHTML('settings')}</div></div><div class="sh"></div>`;
+  Object.assign(loadEl.style, { left: '0px', top: '0px', width: innerWidth + 'px', height: innerHeight + 'px', transition: 'none' });
+  loadFor = 'settings';
+  loadEl.classList.add('on');
+  requestAnimationFrame(() => requestAnimationFrame(() => { if (loadEl) loadEl.style.transition = ''; }));
+  setTimeout(() => { if (loadFor === 'settings') hideSettingsLoad(); }, 6000);
+};
+const hideSettingsLoad = () => {
+  if (loadFor !== 'settings') return;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (loadFor !== 'settings') return;
+    loadFor = null;
+    loadEl?.classList.remove('on');
+  }));
+};
+
+let routerWrapped = false;
+const wrapRouter = () => {
+  if (routerWrapped || !cfg.warmSettings) return;
+  routerWrapped = true;
+  const R = perfMods.router;
+  const orig = R.openUserSettings;
+  const w = function (...args) {
+    settingsT0 = performance.now() - lastInputAt < 3000 ? lastInputAt : performance.now();
+    try { showSettingsLoad(); } catch { }
+    const self = this;
+    requestAnimationFrame(() => setTimeout(() => orig.apply(self, args), 0));
+  };
+  try { R.openUserSettings = w; } catch { }
+  if (R.openUserSettings !== w) try { Object.defineProperty(R, 'openUserSettings', { value: w, writable: true, configurable: true }); } catch { }
+  diag.settingsFeedback = R.openUserSettings === w;
+  report();
+};
+
+const warmSettings = () => {
+  if (!cfg.warmSettings || document.hidden) return;
+  const r = getReq();
+  if (!r?.m || !rootSrc.size) return;
+  const before = new Set(Object.keys(r.c));
+  let modules = 0;
+  for (const id of rootSrc.keys()) {
+    if (r.c[id]) continue;
+    try { r(id); modules++; } catch (e) { fail('warmSettings', e); }
+  }
+  // Pieces those modules load later (webpack .e(chunk) calls): download them now, one at a time
+  const chunks = new Set();
+  const scanSrc = src => { for (const m of src.matchAll(/\.e\(\s*"?([\w-]+)"?\s*\)/g)) chunks.add(m[1]); };
+  for (const src of rootSrc.values()) scanSrc(src);
+  let n = 0;
+  for (const id of Object.keys(r.c)) {
+    if (before.has(id) || n++ > 400) continue;
+    try { const f = r.m[id]; if (typeof f === 'function') scanSrc(Function.prototype.toString.call(f)); } catch { }
+  }
+  const list = [ ...chunks ].slice(0, 60);
+  diag.settingsWarm = { modules: modules + Math.max(0, Object.keys(r.c).length - before.size - modules), chunks: list.length, loaded: 0 };
+  report();
+  let i = 0;
+  const next = () => {
+    if (i >= list.length || typeof r.e !== 'function') return report();
+    const c = list[i++];
+    Promise.resolve().then(() => r.e(c)).then(() => { diag.settingsWarm.loaded++; }, () => { }).then(() => setTimeout(next, 150));
+  };
+  next();
+};
+if (cfg.warmSettings) setTimeout(() => (window.requestIdleCallback ?? setTimeout)(() => { try { findPerf(); warmSettings(); } catch (e) { fail('warm', e); } }, { timeout: 10000 }), 20000);
+
 // Clicking the asar tab always opens the window, even when the tab is already selected (Discord doesn't re-render then)
 document.addEventListener('click', e => {
   const icon = document.querySelector('[data-asar-icon]');
   if (!icon) return;
-  let row = icon;
-  while (row && row.getBoundingClientRect().width < 120) row = row.parentElement;
-  const r = row?.getBoundingClientRect();
-  if (r && e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) open();
+  // The sidebar row our icon sits in (no layout measuring, so clicks in settings stay cheap)
+  const row = icon.closest('[role="tab"],[role="button"],[role="menuitem"],[role="link"],a,li,[class*="item"]') ?? icon.parentElement;
+  if (row?.contains(e.target)) open();
 }, true);
 
 // --- DOM Optimizer: defer removal of heavy activity nodes to avoid layout thrash ---

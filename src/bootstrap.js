@@ -104,7 +104,7 @@ const saveFreezes = () => {
 const riskyOn = () => {
   const preset = require('./cmdSwitches').presetName();
   // Anything asar changes that could slow Discord down: flags, priority, page changes, the user's own CSS/JS
-  return preset === 'gpu' || oaConfig.priority === true || oaConfig.prefetch !== false || oaConfig.keepReady !== false || oaConfig.instantSwitch !== false || oaConfig.pickerTune !== false || oaConfig.domOptimizer === true || !!(oaConfig.customFlags ?? '').trim()
+  return preset === 'gpu' || oaConfig.priority === true || oaConfig.prefetch !== false || oaConfig.keepReady !== false || oaConfig.instantSwitch !== false || oaConfig.warmSettings !== false || oaConfig.pickerTune !== false || oaConfig.domOptimizer === true || !!(oaConfig.customFlags ?? '').trim()
     || oaConfig.instantUI !== false || oaConfig.noBlur !== false || !!(oaConfig.css ?? '').trim() || !!(oaConfig.js ?? '').trim();
 };
 
@@ -268,6 +268,7 @@ const startCore = () => {
     keepReady: oaConfig.keepReady !== false && !pure && !oaConfig.safeMode,
     loader: oaConfig.loader !== false && !pure,
     instantSwitch: oaConfig.instantSwitch !== false && !pure && !oaConfig.safeMode,
+    warmSettings: oaConfig.warmSettings !== false && !pure && !oaConfig.safeMode,
     memTrim: oaConfig.memTrim !== false && !pure && !oaConfig.safeMode,
     top: topChannels(),
     hotkey: hotkeyLabel,

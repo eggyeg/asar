@@ -215,6 +215,7 @@ body:has(.bar.on) .content { padding-bottom: 72px; }
       <div class="row"><div class="t"><b>Preload channels on hover</b><span>When your mouse rests on a channel, its messages start loading before you click.</span></div><label class="sw"><input type="checkbox" data-k="prefetch" data-d="true"><i></i></label></div>
       <div class="row"><div class="t"><b>Keep top channels ready</b><span>The channels you open most (top 4 in the server you're in, up to 10 total) load in the background, one every 0.8 s, so clicking them is instant.</span></div><label class="sw"><input type="checkbox" data-k="keepReady" data-d="true"><i></i></label></div>
       <div class="row"><div class="t"><b>Instant switching</b><span>The channel you click lights up straight away, and if you click several quickly, Discord only opens the last one instead of building each in turn. Costs about one frame before the channel starts opening.</span></div><label class="sw"><input type="checkbox" data-k="instantSwitch" data-d="true"><i></i></label></div>
+      <div class="row"><div class="t"><b>Faster settings</b><span>Prepares Discord's settings while it's idle, and shows “Opening settings” the moment you open them.</span></div><label class="sw"><input type="checkbox" data-k="warmSettings" data-d="true"><i></i></label></div>
       <div class="row"><div class="t"><b>Loading screen</b><span>If a channel, thread or DM takes longer than 0.1 s, its message area shows a calm loading screen until the messages are there.</span></div><label class="sw"><input type="checkbox" data-k="loader" data-d="true"><i></i></label></div>
       <div class="row"><div class="t"><b>Free memory in the background</b><span>After Discord has been minimized or behind a game for 2 minutes, it releases memory it doesn't need (at most every 30 min).</span></div><label class="sw"><input type="checkbox" data-k="memTrim" data-d="true"><i></i></label></div>
       <div class="row"><div class="t"><b>Warm up connections</b><span>Keeps connections to Discord's servers open, so the first messages and images after a click don't wait on a new connection.</span></div><label class="sw"><input type="checkbox" data-k="warmup" data-d="true"><i></i></label></div>
@@ -435,6 +436,13 @@ if (info.hwAccel === false) $('hwbox').hidden = false;
     lines.push(`Loaded ahead: <b>${kept}</b> top channel${kept === 1 ? '' : 's'} kept ready · <b>${hover}</b> on hover · ${pf.skipped} already loaded` + (pf.failed ? ` · ${pf.failed} failed` : ''));
   }
   else if (info.diag && info.diag.prefetchReady === false) lines.push('Preloading is waiting for Discord to finish loading.');
+  const so = info.diag?.settingsOpen ?? [];
+  const sw2 = info.diag?.settingsWarm;
+  if (so.length) {
+    const first = so.find(x => x.first), later = so.filter(x => !x.first).map(x => x.ms);
+    lines.push(`Discord settings opened in ` + (first ? `<b>${first.ms} ms</b> the first time` : '') + (later.length ? `${first ? ', ' : ''}<b>${med(later)} ms</b> after that` : ''));
+  }
+  if (sw2) lines.push(`Settings prepared in advance: ${sw2.modules} modules, ${sw2.loaded}/${sw2.chunks} pieces downloaded` + (info.diag?.settingsFeedback === false ? ' · instant feedback not available in this Discord version' : ''));
   const mm = info.diag?.mem;
   if (mm?.trims) lines.push(`Background memory cleanup: <b>${mm.trims}</b> time${mm.trims === 1 ? '' : 's'}, freed about <b>${mm.freedMB} MB</b>`);
   if (pk?.calls) lines.push(`Screen picker: ${pk.calls} preview request${pk.calls === 1 ? '' : 's'}, <b>${pk.calls - pk.captures}</b> served instantly · Discord asked for ${String(pk.requested).replace(/[^\w ()x.]/g, '')}, made at ${String(pk.used).replace(/[^\w ()x.]/g, '')}` + (pk.captures ? ` · ${Math.round(pk.totalMs / pk.captures)} ms per capture` : ''));
