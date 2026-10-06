@@ -61,6 +61,8 @@ ipcMain.on('ci', e => {
     freezes: global.asarFreezes ? { count: global.asarFreezes.count, longest: global.asarFreezes.longest, gpu: global.asarFreezes.gpu } : null,
     migrated: !!global.asarMigrated,
     pure: !!global.asarPure,
+    picker: global.asarPicker ?? null,
+    hwAccel: settings.get('enableHardwareAcceleration', true),
     mainStalls: global.asarMainStalls ?? null,
     cachesClearedAt: settings.get('asarCachesClearedAt') ?? null,
     hotkey: process.platform === 'darwin' ? 'Cmd + Option + O' : 'Ctrl + Alt + O'

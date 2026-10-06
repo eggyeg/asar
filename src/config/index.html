@@ -124,6 +124,8 @@ textarea { font: 12.5px/1.5 ui-monospace, "Cascadia Code", Menlo, Consolas, mono
 .slowlist { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; font: 11.5px/1.45 ui-monospace, Menlo, Consolas, monospace; color: var(--muted); }
 .slowlist li { display: grid; gap: 1px; padding: 5px 0; border-top: 1px solid var(--line); }
 .slowlist li span:first-child { color: var(--text); overflow-wrap: anywhere; }
+.live { font-size: 12.5px; line-height: 1.7; color: var(--muted); }
+.live b { color: var(--text); font-variant-numeric: tabular-nums; }
 .freeze { margin-top: 10px; font-size: 12px; color: var(--muted); }
 .freeze.bad { color: #f0b232; }
 .warn { font-size: 12px; color: #f0b232; margin-top: 5px; }
@@ -201,6 +203,18 @@ body:has(.bar.on) .content { padding-bottom: 72px; }
         <div class="bars" id="bars"><span class="empty">No launches recorded yet. Restart Discord to get your first number.</span></div>
         <div class="freeze" id="freeze">No freezes this session.</div>
       </div>
+      <div class="notice" id="hwbox" hidden>
+        <b>Hardware acceleration is off in Discord</b>
+        <span>Everything (scrolling, channels, streams) is drawn by your CPU. Turn it on in Discord: Settings → Advanced (or System) → Hardware Acceleration.</span>
+      </div>
+      <div class="speed" id="livebox">
+        <div class="speed-head"><b>Right now</b><span>This session</span></div>
+        <div class="live" id="live">Click a few channels and open the screen-share picker, then reopen this window to see numbers.</div>
+      </div>
+      <h3>Speed-ups</h3>
+      <div class="row"><div class="t"><b>Preload channels on hover</b><span>When your mouse rests on a channel, its messages start loading before you click.</span></div><label class="sw"><input type="checkbox" data-k="prefetch" data-d="true"><i></i></label></div>
+      <div class="row"><div class="t"><b>Warm up connections</b><span>Keeps connections to Discord's servers open, so the first messages and images after a click don't wait on a new connection.</span></div><label class="sw"><input type="checkbox" data-k="warmup" data-d="true"><i></i></label></div>
+      <div class="row"><div class="t"><b>Faster screen-share picker</b><span>Window and screen previews are made at the size the picker shows, and not re-captured more than every 1.5 s.</span></div><label class="sw"><input type="checkbox" data-k="pickerTune" data-d="true"><i></i></label></div>
       <h3>Feel</h3>
       <div class="row"><div class="t"><b>Instant UI</b><span>Switches on Discord's own reduced-motion mode, so modals, popouts and channel switches don't animate.</span></div><label class="sw"><input type="checkbox" data-k="instantUI" data-d="true"><i></i></label></div>
       <div class="row"><div class="t"><b>Turn off blur</b><span>Removes background blur, one of the most expensive effects for your GPU. Looks almost the same.</span></div><label class="sw"><input type="checkbox" data-k="noBlur" data-d="true"><i></i></label></div>
@@ -398,6 +412,25 @@ if (stats.length) {
   $('speedsum').textContent = 'Last launch ' + stats[stats.length - 1].t.toFixed(1) + ' s' + (recent.length > 1 ? ' · average ' + avg.toFixed(1) + ' s' : '');
 }
 if (info.platform && info.platform !== 'win32') $('prow').hidden = true;
+
+// Right now: channel switch times, preloading and screen picker
+if (info.hwAccel === false) $('hwbox').hidden = false;
+{
+  const sw = info.diag?.switches ?? [];
+  const pf = info.diag?.prefetch;
+  const pk = info.picker;
+  const lines = [];
+  const med = a => { const s = [ ...a ].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
+  if (sw.length) {
+    const warm = sw.filter(x => x.warm).map(x => x.ms), cold = sw.filter(x => !x.warm).map(x => x.ms);
+    lines.push(`Channel switch: <b>${med(sw.map(x => x.ms))} ms</b> median over ${sw.length}` +
+      (warm.length && cold.length ? ` · preloaded <b>${med(warm)} ms</b> vs not <b>${med(cold)} ms</b>` : ''));
+  }
+  if (pf && (pf.sent || pf.skipped)) lines.push(`Preloaded <b>${pf.sent}</b> channel${pf.sent === 1 ? '' : 's'} on hover · ${pf.skipped} already loaded` + (pf.failed ? ` · ${pf.failed} failed` : ''));
+  else if (info.diag && info.diag.prefetchReady === false) lines.push('Preloading is waiting for Discord to finish loading.');
+  if (pk?.calls) lines.push(`Screen picker: ${pk.calls} preview request${pk.calls === 1 ? '' : 's'}, <b>${pk.calls - pk.captures}</b> served instantly · Discord asked for ${String(pk.requested).replace(/[^\w ()x.]/g, '')}, made at ${String(pk.used).replace(/[^\w ()x.]/g, '')}` + (pk.captures ? ` · ${Math.round(pk.totalMs / pk.captures)} ms per capture` : ''));
+  if (lines.length) $('live').innerHTML = lines.join('<br>');
+}
 
 // Slow loading check
 if (info.pure) $('purebox').hidden = false;

@@ -95,7 +95,7 @@ const saveFreezes = () => {
 const riskyOn = () => {
   const preset = require('./cmdSwitches').presetName();
   // Anything asar changes that could slow Discord down: flags, priority, page changes, the user's own CSS/JS
-  return preset === 'gpu' || oaConfig.priority === true || oaConfig.domOptimizer === true || !!(oaConfig.customFlags ?? '').trim()
+  return preset === 'gpu' || oaConfig.priority === true || oaConfig.prefetch !== false || oaConfig.pickerTune !== false || oaConfig.domOptimizer === true || !!(oaConfig.customFlags ?? '').trim()
     || oaConfig.instantUI !== false || oaConfig.noBlur !== false || !!(oaConfig.css ?? '').trim() || !!(oaConfig.js ?? '').trim();
 };
 
@@ -166,6 +166,67 @@ const watchWindow = bw => {
   });
 };
 
+// --- Faster screen-share picker ---
+// The Go Live picker asks for a thumbnail of every window and screen, repeatedly while it's open, and they're
+// PNG-encoded in Discord's main process. Thumbnails are capped at the size the picker shows (measured: encoding 10
+// sources takes 873 ms at 1920x1080 vs 51 ms at 480x270), identical requests in flight are shared, and a repeat
+// within 1.5 s gets the last result instead of capturing everything again. Sources without thumbnails (used when
+// the stream actually starts) are never cached.
+const picker = global.asarPicker = { calls: 0, captures: 0, totalMs: 0, requested: null, used: null };
+const tuneScreenPicker = () => {
+  if (oaConfig.pickerTune === false || pure || oaConfig.safeMode) return;
+  try {
+    const { desktopCapturer } = require('electron');
+    const orig = desktopCapturer.getSources.bind(desktopCapturer);
+    const MAX_W = 480, MAX_H = 270;
+    let inflight = null, cache = null;
+
+    desktopCapturer.getSources = (opts = {}) => {
+      picker.calls++;
+      const o = { ...opts };
+      const ts = o.thumbnailSize;
+      picker.requested = ts ? ts.width + 'x' + ts.height : 'default (150x150)';
+      if (ts && ts.width > 0 && ts.height > 0 && (ts.width > MAX_W || ts.height > MAX_H)) {
+        const s = Math.min(MAX_W / ts.width, MAX_H / ts.height);
+        o.thumbnailSize = { width: Math.max(1, Math.round(ts.width * s)), height: Math.max(1, Math.round(ts.height * s)) };
+      }
+      picker.used = o.thumbnailSize ? o.thumbnailSize.width + 'x' + o.thumbnailSize.height : picker.requested;
+
+      const key = JSON.stringify(o);
+      const thumbs = !(o.thumbnailSize && (o.thumbnailSize.width === 0 || o.thumbnailSize.height === 0));
+      if (thumbs && cache && cache.key === key && Date.now() - cache.at < 1500) return Promise.resolve(cache.res);
+      if (inflight && inflight.key === key) return inflight.p;
+
+      const t = Date.now();
+      picker.captures++;
+      const p = orig(o).then(res => {
+        picker.totalMs += Date.now() - t;
+        if (thumbs) cache = { key, at: Date.now(), res };
+        if (inflight?.p === p) inflight = null;
+        return res;
+      }, e => {
+        if (inflight?.p === p) inflight = null;
+        throw e;
+      });
+      inflight = { key, p };
+      return p;
+    };
+  } catch (e) { log('Picker', e); }
+};
+
+// --- Warm connections ---
+// Keep connections to Discord's API and image/media servers open, so the first messages and images after you
+// open a channel don't wait on new TLS handshakes. Repeated when Discord is focused (at most every 2 minutes).
+let lastWarm = 0;
+const warmConnections = () => {
+  if (oaConfig.warmup === false || pure || Date.now() - lastWarm < 120000) return;
+  lastWarm = Date.now();
+  const host = buildInfo.releaseChannel === 'stable' ? 'discord.com' : buildInfo.releaseChannel + '.discord.com';
+  for (const [ url, n ] of [ [ 'https://' + host, 2 ], [ 'https://cdn.discordapp.com', 2 ], [ 'https://media.discordapp.net', 4 ], [ 'https://images-ext-1.discordapp.net', 1 ] ]) {
+    try { session.defaultSession.preconnect({ url, numSockets: n }); } catch { }
+  }
+};
+
 const startCore = () => {
   // asar registers NO network hooks by default. While any session.webRequest listener exists, Electron routes every
   // request (messages, images, stream setup) through Discord's main process, so whenever that process is busy -
@@ -194,6 +255,7 @@ const startCore = () => {
     entry: oaConfig.settingsEntry !== false,
     noBlur: oaConfig.noBlur !== false && !pure && !oaConfig.safeMode,
     pure,
+    prefetch: oaConfig.prefetch !== false && !pure && !oaConfig.safeMode,
     hotkey: hotkeyLabel,
     stats: launchStats()
   }));
@@ -207,6 +269,8 @@ const startCore = () => {
       if (firstReady) {
         firstReady = false;
         watchWindow(bw);
+        warmConnections();
+        bw.on('focus', warmConnections);
         recordLaunch();
         setTimeout(boostPriority, 2000); // after GPU/renderer processes exist
       }
@@ -226,6 +290,7 @@ const startCore = () => {
     });
   });
 
+  tuneScreenPicker(); // before Discord's core loads, so it uses the tuned version
   desktopCore = require('discord_desktop_core');
 
   const stub = () => new Proxy({}, {

@@ -34,6 +34,12 @@ After that, asar keeps itself up to date.
 
 ## What's different from OpenAsar
 
+**Speed-ups** (Settings → Performance, each can be turned off)
+- **Preload channels on hover:** when the pointer rests on a channel for 150 ms, asar asks Discord to fetch its messages, the same call Discord makes on click. It only does this for text channels Discord hasn't loaded, at most once per 500 ms and once per channel every 2 minutes. In the test client a hovered channel opened in about 60 ms, versus about 630 ms with a 600 ms network delay.
+- **Warm up connections:** `session.preconnect` to Discord's API, CDN and media servers at start and on focus, so the first requests after a click skip the TLS handshake.
+- **Faster screen-share picker:** Go Live previews are capped at 480×270, the size the picker shows. Identical requests in flight are shared, and repeats within 1.5 s reuse the last capture. PNG encoding in the main process for 10 sources: 873 ms at 1920×1080 versus 51 ms at 480×270.
+- **Right now panel:** median channel-switch time (preloaded versus not), preload counts and picker stats for the current session. It also warns if Discord's hardware acceleration is off.
+
 **Feel and stability**
 - **No network hooks.** While any `session.webRequest` listener exists, Electron sends every request (messages, images, stream setup) through Discord's main process first. Whenever that process is busy, for example while starting or stopping a screen share, all loading waits on it. In a test with a busy main process, 40 requests took 3x longer in total with a single filtered hook registered. asar 1.3 blocks tracking and typing requests inside the page instead (they resolve instantly as 204). Custom CSS and JS are injected without removing Discord's CSP, so asar registers no hooks at all.
 - **Slow loading check** (Settings → Performance): logs every request over 2 s with where the time went (*waiting for the server* versus *stalled on this PC*), plus main-process stalls and page freezes, and tells you which one is causing the slowness.

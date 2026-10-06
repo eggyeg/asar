@@ -409,6 +409,103 @@ try {
   }).observe({ type: 'longtask', buffered: true });
 } catch { }
 
+// --- Preload channels on hover + channel switch timing ---
+// When the pointer rests on a channel link for 150 ms, ask Discord to fetch that channel's messages (the same call it
+// makes when you click), so they're usually there by the time you click. Conservative: text-type channels only,
+// channels Discord hasn't loaded yet, at most one request per 500 ms, each channel at most once per 2 minutes.
+const perfMods = { actions: null, messages: null, channels: null };
+const perfScanned = new Set();
+const findPerf = () => {
+  if (perfMods.actions && perfMods.messages && perfMods.channels) return true;
+  const cache = getReq()?.c;
+  if (!cache) return false;
+  const look = v => {
+    if (!v || (typeof v !== 'object' && typeof v !== 'function')) return;
+    if (!perfMods.actions && typeof v.fetchMessages === 'function' && typeof v.sendMessage === 'function') perfMods.actions = v;
+    else if (v._dispatchToken !== undefined && typeof v.getName === 'function') {
+      const n = v.getName();
+      if (n === 'MessageStore' && !perfMods.messages) perfMods.messages = v;
+      else if (n === 'ChannelStore' && !perfMods.channels) perfMods.channels = v;
+    }
+  };
+  for (const id in cache) {
+    if (perfScanned.has(id)) continue;
+    const ex = cache[id]?.exports;
+    if (ex == null) continue;
+    try {
+      look(ex);
+      if (typeof ex === 'object' || typeof ex === 'function') for (const k of Object.keys(ex)) look(ex[k]);
+      perfScanned.add(id);
+    } catch { }
+    if (perfMods.actions && perfMods.messages && perfMods.channels) break;
+  }
+  diag.prefetchReady = !!(perfMods.actions && perfMods.messages && perfMods.channels);
+  return diag.prefetchReady;
+};
+
+const TEXT_TYPES = new Set([ 0, 1, 3, 5, 10, 11, 12 ]); // text, DM, group DM, announcement, threads
+const prefetched = new Map(); // channelId -> time
+let lastPrefetch = 0, hoverTimer = 0;
+diag.prefetch = { sent: 0, skipped: 0, failed: 0 };
+
+const channelIdOf = a => {
+  const m = /^\/channels\/(?:@me|\d+)\/(\d+)/.exec(a.getAttribute('href') || '');
+  return m?.[1];
+};
+
+const prefetch = cid => {
+  if (!cfg.prefetch || document.hidden || location.pathname.endsWith('/' + cid)) return;
+  if (Date.now() - (prefetched.get(cid) ?? 0) < 120000) return;
+  if (Date.now() - lastPrefetch < 500) return;
+  if (!findPerf()) return;
+  try {
+    const ch = perfMods.channels.getChannel?.(cid);
+    if (!ch || !TEXT_TYPES.has(ch.type)) { diag.prefetch.skipped++; return; }
+    const cm = perfMods.messages.getMessages?.(cid);
+    if (cm && ((cm.ready || cm.hasFetched) && cm.length > 0 || cm.loadingMore)) { diag.prefetch.skipped++; return; } // loaded or loading
+    prefetched.set(cid, Date.now());
+    lastPrefetch = Date.now();
+    diag.prefetch.sent++;
+    const r = perfMods.actions.fetchMessages({ channelId: cid, limit: 50 });
+    if (r?.catch) r.catch(() => { diag.prefetch.failed++; });
+  } catch { diag.prefetch.failed++; }
+};
+
+if (cfg.prefetch) {
+  document.addEventListener('mouseover', e => {
+    const a = e.target?.closest?.('a[href^="/channels/"]');
+    clearTimeout(hoverTimer);
+    if (!a) return;
+    const cid = channelIdOf(a);
+    if (cid) hoverTimer = setTimeout(() => prefetch(cid), 150);
+  }, { capture: true, passive: true });
+  // Find Discord's message modules while idle, so the first hover doesn't pay for it
+  (window.requestIdleCallback ?? setTimeout)(() => { try { findPerf(); report(); } catch { } }, { timeout: 15000 });
+}
+
+// Channel switch timing: from clicking a channel to its first message being on screen. Shown in asar settings.
+diag.switches = [];
+document.addEventListener('click', e => {
+  const a = e.target?.closest?.('a[href^="/channels/"]');
+  const cid = a && channelIdOf(a);
+  if (!cid) return;
+  clearTimeout(hoverTimer); // the click loads it now; a hover preload would only duplicate that
+  const warm = prefetched.has(cid);
+  if (!warm) prefetched.set(cid, Date.now());
+  const t0 = performance.now();
+  const sel = 'li[id^="chat-messages-' + cid + '-"]';
+  const poll = () => {
+    const ms = performance.now() - t0;
+    if (document.querySelector(sel)) {
+      diag.switches.push({ ms: Math.round(ms), warm });
+      if (diag.switches.length > 30) diag.switches.shift();
+      return report();
+    }
+    if (ms < 10000) setTimeout(poll, 40);
+  };
+  setTimeout(poll, 0);
+}, { capture: true, passive: true });
+
 // Clicking the asar tab always opens the window, even when the tab is already selected (Discord doesn't re-render then)
 document.addEventListener('click', e => {
   const icon = document.querySelector('[data-asar-icon]');
