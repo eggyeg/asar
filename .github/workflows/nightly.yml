@@ -89,7 +89,7 @@ jobs:
 
     - name: Publish to build branch
       run: |
-        # asar self-updates from raw.githubusercontent.com/eggyeg/asar/build/app.asar
+        # asar self-updates from raw.githubusercontent.com/rottenvia/asar/build/app.asar
         SHA=$(git rev-parse --short=7 HEAD)
         mkdir publish && cp app.asar publish/ && cd publish
         printf '# asar build\n\nLatest app.asar, built from %s by CI. See the main branch for source.\n' "$SHA" > README.md

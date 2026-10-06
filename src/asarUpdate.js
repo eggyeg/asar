@@ -28,9 +28,9 @@ const download = (url, hops = 0) => new Promise((res, rej) => {
 
 const hash = b => createHash('sha256').update(b).digest('hex');
 
-// Updates asar from the URL set in settings, defaulting to the latest build on eggyeg/asar's `build` branch
+// Updates asar from the URL set in settings, defaulting to the latest build on rottenvia/asar's `build` branch
 // (published by CI, no GitHub Release needed). Never pulls from upstream OpenAsar, which would silently replace this build.
-const DEFAULT_URL = 'https://raw.githubusercontent.com/eggyeg/asar/build/app.asar';
+const DEFAULT_URL = 'https://raw.githubusercontent.com/rottenvia/asar/build/app.asar';
 
 const check = async url => {
   if (!/^https:\/\//.test(url)) return 'Update URL must start with https://';
@@ -67,7 +67,11 @@ const check = async url => {
 };
 
 // Every check is recorded so the settings window can show when it last ran and what happened
+// The repository moved from eggyeg/asar to rottenvia/asar: an update URL typed in with the old name follows it
+const moved = u => String(u).replace(/^(https:\/\/(?:raw\.githubusercontent\.com|github\.com)\/)eggyeg\/asar\//i, '$1rottenvia/asar/');
+
 module.exports = async (url = oaConfig.updateUrl || DEFAULT_URL) => {
+  url = moved(url);
   let result;
   try {
     result = await check(url);

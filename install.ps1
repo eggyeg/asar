@@ -11,7 +11,7 @@ param(
   [switch]$Uninstall,
   [switch]$NoStart,
   [switch]$Bat, # run from asar-setup.bat: report success/failure as the process exit code
-  [string]$Url = 'https://raw.githubusercontent.com/eggyeg/asar/build/app.asar',
+  [string]$Url = 'https://raw.githubusercontent.com/rottenvia/asar/build/app.asar',
   [string]$Root = $env:LOCALAPPDATA
 )
 

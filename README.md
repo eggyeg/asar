@@ -1,15 +1,15 @@
 # asar
 
-[![Nightly](https://github.com/eggyeg/asar/actions/workflows/nightly.yml/badge.svg)](https://github.com/eggyeg/asar/actions/workflows/nightly.yml) [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+[![Nightly](https://github.com/rottenvia/asar/actions/workflows/nightly.yml/badge.svg)](https://github.com/rottenvia/asar/actions/workflows/nightly.yml) [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
 A faster, self-contained Discord desktop `app.asar`. It's a fork of [OpenAsar](https://github.com/GooseMod/OpenAsar) (nightly 5a44615).
 
 ## Install
 
-**Windows:** download [`asar-setup.bat`](https://github.com/eggyeg/asar/raw/main/asar-setup.bat) (right-click → Save link as) and double-click it. Or paste this into PowerShell:
+**Windows:** download [`asar-setup.bat`](https://github.com/rottenvia/asar/raw/main/asar-setup.bat) (right-click → Save link as) and double-click it. Or paste this into PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/eggyeg/asar/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/rottenvia/asar/main/install.ps1 | iex
 ```
 
 The installer:
@@ -25,7 +25,7 @@ Run it again any time to update. **`uninstall.bat`** (or `asar-setup.bat -Uninst
 **Linux / macOS:**
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/eggyeg/asar/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/rottenvia/asar/main/install.sh | sh
 ```
 
 Add `-s uninstall` after `sh` to remove it. Flatpak and Snap installs are read-only and can't be modded.
@@ -86,7 +86,7 @@ After that, asar keeps itself up to date.
 - New splash with a determinate progress bar, a retry countdown, and Skip/Quit buttons that appear if updates stall.
 - New settings window with General, Performance, Privacy, Theming, Advanced, Debug and About tabs.
 - A **Restore stock Discord** button that puts back `app.asar.backup` and keeps asar as `app.asar.asar-fork`.
-- Self-updates from this repo's [`build` branch](https://github.com/eggyeg/asar/tree/build) a few seconds after launch and shows a notification when it installs an update. Settings → Advanced shows when it last checked and the result. You can turn it off or point it at another URL there. asar never pulls from upstream OpenAsar, which would replace this build.
+- Self-updates from this repo's [`build` branch](https://github.com/rottenvia/asar/tree/build) a few seconds after launch and shows a notification when it installs an update. Settings → Advanced shows when it last checked and the result. You can turn it off or point it at another URL there. asar never pulls from upstream OpenAsar, which would replace this build.
 
 Existing OpenAsar settings (CSS, JS, preset, toggles) are migrated automatically.
 
@@ -110,7 +110,7 @@ asar settings (**Ctrl + Alt + O**) → **Debug** records what Discord and asar a
    - Linux: `/opt/discord/resources` or `/usr/share/discord/resources` (varies by distro)
    - macOS: `/Applications/Discord.app/Contents/Resources`
 3. If there's no `app.asar.backup` yet, rename Discord's `app.asar` to `app.asar.backup`. It's already there if you used OpenAsar before.
-4. Copy the [new `app.asar`](https://github.com/eggyeg/asar/raw/build/app.asar) in and start Discord.
+4. Copy the [new `app.asar`](https://github.com/rottenvia/asar/raw/build/app.asar) in and start Discord.
 
 Discord host updates keep asar automatically. The updater copies it into the new `app-` folder.
 
@@ -125,7 +125,7 @@ npm ci
 npm run build   # -> dist/app.asar
 ```
 
-Every push to `main` is built by GitHub Actions and smoke-tested against the real Discord Linux client (stable and canary). If both pass, the build is pushed to the [`build` branch](https://github.com/eggyeg/asar/tree/build) (where asar updates itself from) and the [`nightly` release](https://github.com/eggyeg/asar/releases/tag/nightly).
+Every push to `main` is built by GitHub Actions and smoke-tested against the real Discord Linux client (stable and canary). If both pass, the build is pushed to the [`build` branch](https://github.com/rottenvia/asar/tree/build) (where asar updates itself from) and the [`nightly` release](https://github.com/rottenvia/asar/releases/tag/nightly).
 
 To check which build you're on, open asar settings → About. The version ends with the commit it was built from, e.g. `1.0.0-abc1234`.
 

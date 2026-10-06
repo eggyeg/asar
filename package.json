@@ -4,7 +4,7 @@
   "private": true,
   "description": "A faster, self-contained Discord desktop app.asar (fork of OpenAsar)",
   "license": "AGPL-3.0-only",
-  "repository": "github:eggyeg/asar",
+  "repository": "github:rottenvia/asar",
   "scripts": {
     "build": "node build.js"
   },

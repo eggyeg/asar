@@ -7,7 +7,7 @@
 # Set ASAR_DIRS to a space-separated list of Discord "resources" folders to override detection.
 set -eu
 
-URL="${ASAR_URL:-https://raw.githubusercontent.com/eggyeg/asar/build/app.asar}"
+URL="${ASAR_URL:-https://raw.githubusercontent.com/rottenvia/asar/build/app.asar}"
 MODE="${1:-install}"
 
 say() { printf '  %s\n' "$*"; }
