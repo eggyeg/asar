@@ -1,3 +1,3 @@
 # asar build
 
-Latest app.asar, built from cd19c0f. See the main branch for source.
+Latest app.asar, built from 9ce570a. See the main branch for source.
