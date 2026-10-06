@@ -25,6 +25,8 @@ const backupPath = () => {
 ipcMain.on('DISCORD_UPDATED_QUOTES', (e, c) => {
   if (c === 'o') return exports.open();
 
+  if (c && typeof c === 'object' && typeof c.asarFreeze === 'number') return global.asarRecordFreeze?.('page', c.asarFreeze);
+
   // Status report from the injected script (is the settings tab in place, and if not, why)
   if (c && typeof c === 'object' && c.asarDiag) {
     global.asarDiag = { ...c.asarDiag, at: new Date().toISOString(), discord: app.getVersion() };
@@ -33,7 +35,12 @@ ipcMain.on('DISCORD_UPDATED_QUOTES', (e, c) => {
 });
 
 ipcMain.on('cg', e => { e.returnValue = oaConfig; });
-ipcMain.on('cs', (e, c) => { if (c && typeof c === 'object') save(c); });
+ipcMain.on('cs', (e, c) => {
+  if (!c || typeof c !== 'object') return;
+  // Keep fields set by the main process (safe mode, migrations) unless the window changes them explicitly
+  for (const k of [ 'safeMode', 'safeModeReason', 'safeModeAt', 'configVersion' ]) if (!(k in c) && k in oaConfig) c[k] = oaConfig[k];
+  save(c);
+});
 ipcMain.on('cr', () => { settings.save(); restart(); });
 ipcMain.on('cc', () => win?.close());
 ipcMain.on('cm', () => win?.minimize());
@@ -51,6 +58,8 @@ ipcMain.on('ci', e => {
     lastUpdate: settings.get('asarLastUpdate'),
     stats: settings.get('asarStats', []),
     diag: global.asarDiag ?? null,
+    freezes: global.asarFreezes ? { count: global.asarFreezes.count, longest: global.asarFreezes.longest, gpu: global.asarFreezes.gpu } : null,
+    migrated: !!global.asarMigrated,
     hotkey: process.platform === 'darwin' ? 'Cmd + Option + O' : 'Ctrl + Alt + O'
   };
 });

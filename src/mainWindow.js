@@ -82,7 +82,7 @@ document.addEventListener('visibilitychange', () => document.hidden && safeSync(
 // We add an "asar" section to it through Discord's webpack modules, the same way Vencord and BetterDiscord do.
 // Independent of class names and UI language. Every step is recorded in `diag` (asar settings > About, and
 // asar-diagnostics.json in Discord's data folder) so a failure can be pinpointed.
-const diag = { version: cfg.version, wreq: false, root: false, types: false, react: false, wrapped: 0, patched: false, builds: 0, line: false, error: null };
+const diag = { version: cfg.version, wreq: false, root: false, types: false, react: false, wrapped: 0, patched: false, builds: 0, line: false, error: null, longTasks: 0, longestTask: 0 };
 let lastReport = '';
 const report = () => {
   const s = JSON.stringify(diag);
@@ -263,7 +263,7 @@ const VERSION_XPATH = '//text()[contains(.,"(")][' + [ 'stable', 'Stable', 'STAB
 let lastLine = 0, lineTimer = 0;
 const versionLine = () => {
   if (document.getElementById('asar-ver')) return;
-  const wait = 1500 - (Date.now() - lastLine);
+  const wait = (patched ? 1500 : 3000) - (Date.now() - lastLine);
   if (wait > 0) { // rate limited: try again once the window has passed instead of dropping it
     if (!lineTimer) lineTimer = setTimeout(() => { lineTimer = 0; versionLine(); }, wait + 20);
     return;
@@ -293,9 +293,12 @@ const versionLine = () => {
 let timer;
 const attempt = () => {
   try { patchSettings(); } catch (e) { fail('attempt', e); }
-  try { versionLine(); } catch (e) { fail('line', e); }
+  // Once the tab is patched in, our icon only exists while settings are open, so the (whole-page) version-line
+  // search never runs while you're using chat
+  try { if (!patched || document.querySelector('[data-asar-icon]')) versionLine(); } catch (e) { fail('line', e); }
 };
-const schedule = () => {
+const schedule = e => {
+  if (e.type === 'keyup' && !(e.ctrlKey || e.metaKey)) return; // typing in chat: ignore (settings open with a click or Ctrl+,)
   clearTimeout(timer);
   timer = setTimeout(attempt, 200);
 };
@@ -304,11 +307,38 @@ const cleanup = () => unhook();
 if (cfg.entry) {
   try { getReq(); hookChunks(); wrapPending(); } catch (e) { fail('init', e); }
   for (const t of [ 1000, 4000, 15000 ]) setTimeout(attempt, t);
-  // Settings only open after a click or key press, so that's the only time we look for the version line
+  setTimeout(() => unhook(), 180000); // stop inspecting new code chunks after 3 minutes no matter what
   document.addEventListener('click', schedule, true);
   document.addEventListener('keyup', schedule, true);
   report();
 }
+
+// Freeze heartbeat: if this 1 s timer fires late, the page was frozen for that long. Works without input (Electron's
+// "unresponsive" event only fires if you click or type during the freeze). Only counted while Discord is visible,
+// since hidden pages may be throttled legitimately.
+{
+  let last = performance.now();
+  setInterval(() => {
+    const now = performance.now();
+    const gap = now - last - 1000;
+    last = now;
+    if (gap > 3000 && document.visibilityState === 'visible') {
+      try { DiscordNative.ipc.send('DISCORD_UPDATED_QUOTES', { asarFreeze: Math.round(gap + 1000) }); } catch { }
+    }
+  }, 1000);
+}
+
+// Freeze diagnostics: long tasks (>1 s) on Discord's page, reported to asar-diagnostics.json
+try {
+  new PerformanceObserver(list => {
+    for (const e of list.getEntries()) {
+      if (e.duration < 1000) continue;
+      diag.longTasks++;
+      diag.longestTask = Math.max(diag.longestTask, Math.round(e.duration));
+    }
+    report();
+  }).observe({ type: 'longtask', buffered: true });
+} catch { }
 
 // Clicking the asar tab always opens the window, even when the tab is already selected (Discord doesn't re-render then)
 document.addEventListener('click', e => {

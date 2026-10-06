@@ -1,6 +1,6 @@
 const { join } = require('path');
 
-global.asarVersion = '1.1.1';
+global.asarVersion = '1.2.0';
 global.oaVersion = global.asarVersion; // Kept for compatibility with mods that read it
 
 global.log = (area, ...args) => console.log(`[\x1b[38;2;139;123;255masar\x1b[0m > ${area}]`, ...args);
@@ -15,6 +15,19 @@ paths.init();
 
 global.settings = require('./appSettings').getSettings();
 global.oaConfig = settings.get('asar') ?? settings.get('openasar', {}); // Migrate existing OpenAsar config transparently
+
+// asar 1.2: earlier defaults (forced GPU flags, partial priority boost, DOM optimizer) caused long freezes on some
+// PCs. Move existing installs onto the stock-safe defaults once; anything can be turned back on in settings.
+if ((oaConfig.configVersion ?? 0) < 2) {
+  const c = { ...oaConfig, configVersion: 2 };
+  if (!c.cmdPreset || c.cmdPreset === 'perf' || c.cmdPreset === 'balanced') c.cmdPreset = 'stock';
+  c.priority = false;
+  c.domOptimizer = false;
+  global.oaConfig = c;
+  settings.set('asar', c);
+  settings.save();
+  global.asarMigrated = true;
+}
 
 const M = require('module');
 

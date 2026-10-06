@@ -34,14 +34,14 @@ After that, asar keeps itself up to date.
 
 ## What's different from OpenAsar
 
-**Feel**
-- **Instant UI** (on by default): Discord's animations for modals, popouts and channel switches are turned off. asar does this through Chromium's reduced-motion setting, which Discord already respects, plus near-zero CSS transitions.
+**Feel and stability**
+- **Stock graphics flags by default.** asar 1.0 and 1.1 (and OpenAsar's "perf" preset) forced GPU features that Chromium blocklists for some drivers: `--ignore-gpu-blocklist`, zero-copy, hardware overlays and forcing the high-performance GPU. On affected PCs the GPU process hangs, so Discord freezes for 10 to 30 seconds, especially when screen sharing or opening image-heavy channels. Those flags are now an opt-in **GPU boost** preset. asar 1.2 moves existing installs back to **Stock** once.
+- **Freeze watchdog.** asar records every freeze and every graphics-process crash in `asar-freezes.json`. A once-a-second heartbeat inside Discord's page catches freezes even if you don't click during them. If Discord freezes while one of asar's optional speed-ups is on, asar switches to **safe mode**, which turns them all off, and shows a notification.
+- **Instant UI** (on by default): turns off Discord's animations for modals, popouts and channel switches. asar does this through Chromium's reduced-motion setting, which Discord already respects.
 - **No blur** (on by default): removes `backdrop-filter` blur, one of the most expensive effects to composite.
-- **High priority** (Windows, on by default): Discord's main, renderer and GPU processes run at *above normal* priority, so other busy apps don't starve it.
-- **No idle work:** there are no timers polling Discord's page. OpenAsar searched the settings DOM every 800 ms forever, and asar 1.0 did a text scan every second whenever it couldn't find the entry.
-- **Startup time is measured every launch** and shown in Settings → Performance as a chart of your last 10 launches.
-
-All three toggles are in asar settings → Performance.
+- **High priority** (Windows, opt-in): raises all of Discord's processes. 1.1 raised only some of them, which starved Discord's own network process while big channels rendered.
+- **Light in-page code.** In a heavy-channel benchmark, asar's code in Discord's page measured within run-to-run noise of having it off. There are no timers polling the page, and no page searches while you type or click in chat.
+- **Startup time is measured every launch** and charted in Settings → Performance, next to any freezes this session.
 
 **Fixes**
 - **Settings UI no longer breaks.** OpenAsar downloaded its splash and settings UI from `cdn.openasar.dev` every time. asar bundles both inside `app.asar` and loads them from disk. They work offline and a remote change can't break them.

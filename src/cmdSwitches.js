@@ -4,23 +4,35 @@ const { app } = require('electron');
 const paths = require('./paths');
 
 const presets = {
-  // Base Discord flags + CalculateNativeWinOcclusion off (fixes blank/frozen window when restoring from minimized/tray on Windows)
-  'base': '--autoplay-policy=no-user-gesture-required --disable-features=WinRetrieveSuggestionsOnlyOnDemand,HardwareMediaKeyHandling,MediaSessionService,UseEcoQoSForBackgroundProcess,IntensiveWakeUpThrottling,AllowAggressiveThrottlingWithWebSocket,CalculateNativeWinOcclusion --disable-background-timer-throttling',
+  // Exactly the flags stock Discord launches with
+  'base': '--autoplay-policy=no-user-gesture-required --disable-features=WinRetrieveSuggestionsOnlyOnDemand,HardwareMediaKeyHandling,MediaSessionService,UseEcoQoSForBackgroundProcess,IntensiveWakeUpThrottling,AllowAggressiveThrottlingWithWebSocket --disable-background-timer-throttling',
 
-  // Performance: GPU raster + zero-copy, DrDc, bfcache, lazy wasm, no background throttling of the renderer
-  'perf': '--enable-gpu-rasterization --enable-zero-copy --ignore-gpu-blocklist --enable-hardware-overlays=single-fullscreen,single-on-top,underlay --enable-features=EnableDrDc,CanvasOopRasterization,BackForwardCache:TimeToLiveInBackForwardCacheInSeconds/300/should_ignore_blocklists/true/enable_same_site/true,ThrottleDisplayNoneAndVisibilityHiddenCrossOriginIframes,WebAssemblyLazyCompilation --disable-features=Vulkan --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --force_high_performance_gpu',
+  // Stock (default): nothing on top of Discord's own flags. Chromium already uses GPU rasterization wherever the
+  // driver supports it, so this is also the fastest stable option on most PCs.
+  'stock': '',
 
-  // Balanced: just the base flags (closest to vanilla Discord)
-  'balanced': '',
+  // GPU boost (opt-in, experimental): forces GPU features Chromium has blocklisted for some drivers. On affected
+  // GPUs this makes the GPU process hang, which freezes Discord for 10-30 s (worst with screen share and image-heavy
+  // channels). The freeze watchdog switches back to Stock automatically if that happens.
+  'gpu': '--enable-gpu-rasterization --enable-zero-copy --ignore-gpu-blocklist --enable-hardware-overlays=single-fullscreen,single-on-top,underlay --enable-features=EnableDrDc,CanvasOopRasterization,WebAssemblyLazyCompilation --disable-features=Vulkan --force_high_performance_gpu',
 
   // Battery: low power GPU, no media caching on battery, smaller V8 heap footprint
   'battery': '--enable-features=TurnOffStreamingMediaCachingOnBattery --force_low_power_gpu --js-flags=--optimize-for-size'
 };
 
-module.exports = () => {
-  const sel = ('base,' + (oaConfig.cmdPreset || 'perf')).split(',');
-  const flags = (oaConfig.customFlags ?? '').split(' ');
-  for (const p of sel) if (presets[p]) flags.push(...presets[p].split(' '));
+const presetName = () => {
+  if (oaConfig.safeMode) return 'stock';
+  const p = oaConfig.cmdPreset;
+  if (p === 'perf') return 'gpu';
+  if (p === 'balanced' || !presets[p]) return 'stock';
+  return p;
+};
+
+const apply = () => {
+  const preset = presetName();
+  const flags = oaConfig.safeMode ? [] : (oaConfig.customFlags ?? '').split(' ');
+  for (const p of [ 'base', preset ]) if (presets[p]) flags.push(...presets[p].split(' '));
+  log('Flags', 'Preset', preset + (oaConfig.safeMode ? ' (safe mode)' : ''));
 
   // Instant UI: Discord follows the system "reduce motion" setting by default, so this switches off its
   // JS-driven animations (modals, popouts, channel switches) properly rather than just CSS ones
@@ -42,3 +54,6 @@ module.exports = () => {
 
   for (const k in c) app.commandLine.appendSwitch(k, [...c[k]].join(k === 'js-flags' ? ' ' : ','));
 };
+
+module.exports = apply;
+module.exports.presetName = presetName;

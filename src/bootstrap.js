@@ -65,22 +65,95 @@ const launchStats = () => {
   return { last, avg: recent.length > 1 ? recent.reduce((a, x) => a + x.t, 0) / recent.length : null, n: recent.length };
 };
 
-// Raise Discord's processes above other apps so it stays responsive while games/browsers are busy (Windows only;
-// other platforms need root to raise priority)
+// Opt-in: raise ALL of Discord's processes above other apps (Windows only). 1.1 raised only the UI, GPU and main
+// processes, which starved Discord's own network and audio/video processes while a heavy channel was rendering.
 const boostPriority = () => {
-  if (process.platform !== 'win32' || oaConfig.priority === false) return;
+  if (process.platform !== 'win32' || oaConfig.priority !== true || oaConfig.safeMode) return;
   const os = require('os');
   for (const m of app.getAppMetrics()) {
-    if (![ 'Browser', 'Tab', 'GPU' ].includes(m.type)) continue;
     try { os.setPriority(m.pid, os.constants.priority.PRIORITY_ABOVE_NORMAL); } catch { }
   }
 };
 
+// --- Freeze watchdog ---
+// Records every time Discord's window stops responding or the GPU process dies. If that happens while one of asar's
+// optional speed-ups is on, asar switches them all off (safe mode) and tells you, so a bad setting can't keep
+// freezing Discord.
+const freezes = global.asarFreezes = { count: 0, longest: 0, gpu: 0, events: [] };
+
+const saveFreezes = () => {
+  try {
+    const f = join(require('./paths').getUserData(), 'asar-freezes.json');
+    let all = [];
+    try { all = JSON.parse(readFileSync(f, 'utf8')); } catch { }
+    require('fs').writeFileSync(f, JSON.stringify([ ...all, ...freezes.events.splice(0) ].slice(-50), null, 2));
+  } catch { }
+};
+
+const riskyOn = () => {
+  const preset = require('./cmdSwitches').presetName();
+  return preset === 'gpu' || oaConfig.priority === true || oaConfig.domOptimizer === true || !!(oaConfig.customFlags ?? '').trim();
+};
+
+const enterSafeMode = reason => {
+  if (oaConfig.safeMode || !riskyOn()) return;
+  const c = { ...oaConfig, safeMode: true, safeModeReason: reason, safeModeAt: Date.now() };
+  global.oaConfig = c;
+  settings.set('asar', c);
+  settings.save();
+  log('Watchdog', 'Safe mode on:', reason);
+
+  const { Notification } = require('electron');
+  if (Notification.isSupported()) new Notification({
+    title: 'asar turned on safe mode',
+    body: `Discord froze (${reason}). asar turned off its optional speed-ups. Restart Discord to apply.`
+  }).show();
+};
+
+let lastFreezeAt = 0;
+const recordFreeze = (kind, ms, extra) => {
+  // The page heartbeat and Electron's unresponsive event can both see the same freeze; count it once
+  if (kind !== 'gpu') {
+    if (Date.now() - lastFreezeAt < 15000) return;
+    lastFreezeAt = Date.now();
+  }
+  const ev = { at: new Date().toISOString(), kind, ms, preset: require('./cmdSwitches').presetName(), ...extra };
+  freezes.events.push(ev);
+  if (kind !== 'gpu') { freezes.count++; freezes.longest = Math.max(freezes.longest, ms); }
+  if (kind === 'gpu') freezes.gpu++;
+  log('Watchdog', kind, ms ? ms + 'ms' : '', extra ?? '');
+  saveFreezes();
+  if (kind !== 'gpu' && (ms >= 8000 || freezes.count >= 2)) enterSafeMode(`Discord froze for ${Math.round(ms / 1000)} s`);
+};
+global.asarRecordFreeze = recordFreeze;
+
+app.on('child-process-gone', (e, d) => {
+  if (d.type !== 'GPU' || d.reason === 'clean-exit') return;
+  recordFreeze('gpu', 0, { reason: d.reason, exitCode: d.exitCode });
+  enterSafeMode('the graphics process ' + (d.reason === 'killed' ? 'hung' : d.reason));
+});
+
+const watchWindow = bw => {
+  let since = 0;
+  bw.on('unresponsive', () => { since = Date.now(); });
+  bw.on('responsive', () => {
+    if (!since) return;
+    const ms = Date.now() - since;
+    since = 0;
+    recordFreeze('window', ms + 5000); // the event itself only fires after ~5 s without a response
+  });
+};
+
 const startCore = () => {
-  if (oaConfig.js || oaConfig.css) session.defaultSession.webRequest.onHeadersReceived((d, cb) => {
-    delete d.responseHeaders['content-security-policy'];
-    delete d.responseHeaders['Content-Security-Policy'];
-    cb(d);
+  // Custom CSS/JS need Discord's page CSP removed. Only the page document is routed through here; OpenAsar inspected
+  // every response (each image and attachment in a channel) in the main process, which slows image-heavy channels.
+  if (oaConfig.js || oaConfig.css) session.defaultSession.webRequest.onHeadersReceived({
+    urls: [ 'app*', 'channels/*', 'popout*', 'login*' ].flatMap(p => [ 'https://discord.com/' + p, 'https://*.discord.com/' + p ])
+  }, (d, cb) => {
+    if (d.resourceType !== 'mainFrame' && d.resourceType !== 'subFrame') return cb({});
+    const h = { ...d.responseHeaders };
+    for (const k of Object.keys(h)) if (k.toLowerCase() === 'content-security-policy') delete h[k];
+    cb({ responseHeaders: h });
   });
 
   require('./config'); // Registers the IPC that opens asar settings (window itself only opens when you ask)
@@ -90,7 +163,7 @@ const startCore = () => {
   const injected = () => injectedSrc.replace('__ASAR_CFG__', () => JSON.stringify({
     version: asarVersion,
     noTrack: oaConfig.noTrack !== false,
-    domOpt: oaConfig.domOptimizer !== false,
+    domOpt: oaConfig.domOptimizer === true && !oaConfig.safeMode,
     themeSync: oaConfig.themeSync !== false,
     entry: oaConfig.settingsEntry !== false,
     noBlur: oaConfig.noBlur !== false,
@@ -108,6 +181,7 @@ const startCore = () => {
 
       if (firstReady) {
         firstReady = false;
+        watchWindow(bw);
         recordLaunch();
         setTimeout(boostPriority, 2000); // after GPU/renderer processes exist
       }
