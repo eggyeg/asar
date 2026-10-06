@@ -587,14 +587,47 @@ const placeLoad = () => {
   Object.assign(loadEl.style, { left: b.left + 'px', top: b.top + 'px', width: b.width + 'px', height: b.height + 'px' });
   return true;
 };
-const showLoad = cid => {
+const showLoad = (cid, now = false) => {
+  if (loadFor === cid && loadEl?.classList.contains('on')) return;
   buildLoad(cid);
   if (!placeLoad()) return;
   loadFor = cid;
-  requestAnimationFrame(() => loadEl?.classList.add('on'));
+  if (!now) return requestAnimationFrame(() => loadEl?.classList.add('on'));
+  // Instant: visible in the very next frame (no fade-in), so it's on screen before Discord starts building the channel
+  loadEl.style.transition = 'none';
+  loadEl.classList.add('on');
+  requestAnimationFrame(() => requestAnimationFrame(() => { if (loadEl) loadEl.style.transition = ''; }));
 };
-const hideLoad = () => { loadFor = null; loadEl?.classList.remove('on'); };
+
+// Thin progress line across the top of the chat, for channels Discord already has (building them can still take a
+// moment). Shown instantly on click; a fast switch hides it before you'd notice. Animated on the compositor, so it
+// keeps moving even while Discord's main thread is busy rendering.
+let barEl = null;
+const showBar = () => {
+  if (!document.getElementById('asar-bar-css')) addStyle('asar-bar-css', `
+#asar-bar{position:fixed;z-index:2147483646;height:2px;pointer-events:none;overflow:hidden;contain:strict}
+#asar-bar i{position:absolute;top:0;bottom:0;width:35%;border-radius:2px;background:var(--brand-500,#8b7bff);will-change:transform;animation:asar-bar 0.9s cubic-bezier(.4,0,.2,1) infinite}
+@keyframes asar-bar{from{transform:translateX(-100%)}to{transform:translateX(290%)}}
+.asar-pending{background:var(--background-modifier-selected,rgba(78,80,88,.6))!important;color:var(--interactive-active,#fff)!important;border-radius:4px}`);
+  if (!barEl?.isConnected) {
+    barEl = document.createElement('div');
+    barEl.id = 'asar-bar';
+    barEl.innerHTML = '<i></i>';
+    document.body.appendChild(barEl);
+  }
+  const b = chatRect();
+  if (!b) return;
+  Object.assign(barEl.style, { display: 'block', left: b.left + 'px', top: b.top + 'px', width: b.width + 'px' });
+};
+const hideBar = () => { if (barEl) barEl.style.display = 'none'; };
+
+const hideLoad = () => { loadFor = null; loadEl?.classList.remove('on'); hideBar(); };
 addEventListener('resize', () => { if (loadFor) placeLoad(); }, { passive: true });
+
+// Discord already has this channel's messages (so opening it needs no download)
+const inStore = cid => {
+  try { const cm = perfMods.messages?.getMessages?.(cid); return !!(cm && (cm.ready || cm.hasFetched)); } catch { return false; }
+};
 
 // A channel counts as ready when its first message is on screen, or Discord says it's loaded and empty
 const isReady = cid => {
@@ -612,7 +645,7 @@ const startNav = (cid, warm) => {
   const id = ++navId;
   hideLoad();
   const t0 = performance.now();
-  const showAt = setTimeout(() => { if (id === navId && cfg.loader && !isReady(cid)) showLoad(cid); }, 120);
+  const showAt = setTimeout(() => { if (id === navId && cfg.loader && !isReady(cid) && !inStore(cid)) showLoad(cid); }, 120);
   const poll = () => {
     if (id !== navId) return clearTimeout(showAt); // another navigation took over
     const ms = performance.now() - t0;
@@ -630,7 +663,9 @@ const startNav = (cid, warm) => {
   setTimeout(poll, 0);
 };
 
+const PASS = new WeakSet(); // clicks asar hands on to Discord after showing feedback
 document.addEventListener('click', e => {
+  if (PASS.has(e)) return;
   const a = e.target?.closest?.('a[href^="/channels/"]');
   const cid = a && channelIdOf(a);
   if (cid) {
@@ -651,6 +686,55 @@ document.addEventListener('click', e => {
   }, t);
 }, { capture: true, passive: true });
 addEventListener('keydown', e => { if (e.key === 'Escape') hideLoad(); }, { capture: true, passive: true });
+
+// --- Instant switching ---
+// Discord builds a channel's whole view in one go, and nothing else (not your next click, not the loading screen)
+// runs until it's done. So asar takes channel clicks first: it highlights the channel and shows the loading screen
+// (or the progress line if Discord already has the messages), lets that reach the screen (one frame), then hands
+// the click to Discord. If you click again before that, only the newest click is handed on, so Discord never builds
+// channels you've already left. While you're switching quickly, asar waits a little longer to collect clicks.
+let pending = null, lastSwitchClick = 0;
+const cancelPending = () => {
+  if (!pending) return;
+  cancelAnimationFrame(pending.raf);
+  clearTimeout(pending.timer);
+  pending.a.classList.remove('asar-pending');
+  pending = null;
+};
+if (cfg.instantSwitch) document.addEventListener('click', e => {
+  if (PASS.has(e) || !e.isTrusted || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+  const a = e.target?.closest?.('a[href^="/channels/"]');
+  const cid = a && channelIdOf(a);
+  if (!cid) return;
+  if (location.pathname.endsWith('/' + cid) && !pending) return; // already there
+
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  cancelPending();
+
+  const now = performance.now();
+  const rapid = now - lastSwitchClick < 450;
+  lastSwitchClick = now;
+
+  try {
+    showBar(); // also loads the .asar-pending style
+    a.classList.add('asar-pending');
+    if (cfg.loader && !inStore(cid)) { hideBar(); showLoad(cid, true); }
+  } catch { }
+
+  const target = e.target, x = e.clientX, y = e.clientY;
+  const go = () => {
+    if (pending?.a !== a) return;
+    pending = null;
+    a.classList.remove('asar-pending');
+    const ev = new MouseEvent('click', { bubbles: true, cancelable: true, composed: true, view: window, button: 0, clientX: x, clientY: y });
+    PASS.add(ev);
+    (target.isConnected ? target : a).dispatchEvent(ev);
+  };
+  pending = { a, cid };
+  pending.raf = requestAnimationFrame(() => { if (pending?.a === a) pending.timer = setTimeout(go, rapid ? 110 : 0); });
+  diag.instant = (diag.instant ?? 0) + 1;
+}, { capture: true });
 
 // --- Free memory in the background ---
 // After Discord has been hidden (minimized, or covered by a game) for 2 minutes, ask Discord to release memory it

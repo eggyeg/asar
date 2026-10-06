@@ -1,6 +1,6 @@
 const { join } = require('path');
 
-global.asarVersion = '1.6.0';
+global.asarVersion = '1.7.0';
 global.oaVersion = global.asarVersion; // Kept for compatibility with mods that read it
 
 global.log = (area, ...args) => console.log(`[\x1b[38;2;139;123;255masar\x1b[0m > ${area}]`, ...args);
