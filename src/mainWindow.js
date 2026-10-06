@@ -539,28 +539,31 @@ const LOAD_CSS = `
  background:var(--background-base-lower,var(--background-primary,#1a1a1e));font-family:var(--font-primary,system-ui,sans-serif)}
 #asar-load.on{opacity:1}
 #asar-load .hd{display:flex;align-items:center;gap:12px;padding:22px 32px 8px}
-#asar-load .sp{width:16px;height:16px;flex:none;border-radius:50%;border:2px solid color-mix(in srgb,var(--brand-500,#8b7bff) 26%,transparent);border-top-color:var(--brand-500,#8b7bff);animation:asar-spin .75s linear infinite}
+#asar-load .sp{width:16px;height:16px;flex:none;border-radius:50%;will-change:transform;border:2px solid color-mix(in srgb,var(--brand-500,#8b7bff) 26%,transparent);border-top-color:var(--brand-500,#8b7bff);animation:asar-spin .75s linear infinite}
 #asar-load .tt{display:grid;gap:3px;min-width:0}
 #asar-load .tt b{font-weight:600;font-size:15px;color:var(--text-strong,var(--header-primary,#f2f3f5));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #asar-load .st{font-size:13px;line-height:16px;height:16px;color:var(--text-muted,#949ba4);white-space:nowrap}
 #asar-load .st span{display:inline-block}
-#asar-load .dots span{width:.42em;opacity:0}
+#asar-load .dots span{width:.42em;opacity:0;will-change:opacity}
 #asar-load .dots span:nth-child(1){animation:asar-d1 2.4s infinite}
 #asar-load .dots span:nth-child(2){animation:asar-d2 2.4s infinite}
 #asar-load .dots span:nth-child(3){animation:asar-d3 2.4s infinite}
 @keyframes asar-d1{0%,12%{opacity:0}12.5%,74%{opacity:1}75%,100%{opacity:0}}
 @keyframes asar-d2{0%,24%{opacity:0}25%,61%{opacity:1}62%,100%{opacity:0}}
 @keyframes asar-d3{0%,37%{opacity:0}37.5%,49%{opacity:1}50%,100%{opacity:0}}
-#asar-load .wave span{animation:asar-wave 1.3s ease-in-out infinite;animation-delay:calc(var(--i)*90ms)}
-@keyframes asar-wave{0%,60%,100%{transform:none;opacity:.55}30%{transform:translateY(-3px);opacity:1;color:var(--text-default,var(--text-normal,#dbdee1))}}
+#asar-load .wave span{will-change:transform,opacity;animation:asar-wave 1.3s ease-in-out infinite;animation-delay:calc(var(--i)*90ms)}
+@keyframes asar-wave{0%,60%,100%{transform:none;opacity:.55}30%{transform:translateY(-3px);opacity:1}}
 #asar-load .wave span.sep{animation:none;opacity:.35;padding:0 .12em}
-#asar-load .type span{opacity:0;animation:asar-type 2.8s infinite;animation-delay:calc(var(--i)*65ms)}
+#asar-load .type span{opacity:0;will-change:opacity;animation:asar-type 2.8s infinite;animation-delay:calc(var(--i)*65ms)}
 #asar-load .type u{text-decoration:none;display:inline-block;margin-left:1px;width:1px;height:13px;vertical-align:-2px;background:currentColor;animation:asar-caret .9s steps(1) infinite}
 @keyframes asar-type{0%{opacity:0}3%,70%{opacity:1}74%,100%{opacity:0}}
 @keyframes asar-caret{50%{opacity:0}}
-#asar-load .shim{color:transparent;-webkit-background-clip:text;background-clip:text;background-size:240% 100%;animation:asar-shim 1.7s linear infinite;
- background-image:linear-gradient(90deg,var(--text-muted,#949ba4) 0%,var(--text-muted,#949ba4) 38%,var(--text-strong,#fff) 50%,var(--text-muted,#949ba4) 62%,var(--text-muted,#949ba4) 100%)}
-@keyframes asar-shim{from{background-position:100% 0}to{background-position:0 0}}
+#asar-load .shim{position:relative;display:inline-block}
+#asar-load .shim .win{position:absolute;left:0;top:0;height:100%;width:40%;overflow:hidden;will-change:transform;animation:asar-win 1.7s linear infinite;
+ -webkit-mask-image:linear-gradient(90deg,transparent,#000 35%,#000 65%,transparent);mask-image:linear-gradient(90deg,transparent,#000 35%,#000 65%,transparent)}
+#asar-load .shim .hi{position:absolute;left:0;top:0;white-space:nowrap;color:var(--text-strong,var(--header-primary,#fff));will-change:transform;animation:asar-hi 1.7s linear infinite}
+@keyframes asar-win{from{transform:translateX(-100%)}to{transform:translateX(250%)}}
+@keyframes asar-hi{from{transform:translateX(40%)}to{transform:translateX(-100%)}}
 #asar-load.full{display:grid;place-items:center}
 #asar-load.full .hd{padding:0;flex-direction:column;gap:14px;text-align:center}
 #asar-load.full .sp{width:22px;height:22px}
@@ -640,7 +643,8 @@ const statusHTML = kind => {
   if (style === 0) return `<div class="st dots">${p.dots}<span>.</span><span>.</span><span>.</span></div>`;
   if (style === 1) return `<div class="st wave">${letters('l-o-a-d-i-n-g')}</div>`;
   if (style === 2) return `<div class="st type">${letters(p.type)}<u></u></div>`;
-  return `<div class="st shim">${p.shim}</div>`;
+  // Shimmer built from two counter-moving layers (transform only), so it keeps moving while Discord is busy
+  return `<div class="st shim"><span>${p.shim}</span><span class="win" aria-hidden="true"><span class="hi">${p.shim}</span></span></div>`;
 };
 let pendingDM = null;
 
@@ -710,6 +714,25 @@ const isReady = cid => {
   return false;
 };
 
+// Where a slow switch's time went, from Chromium's long-animation-frame timing: Discord's code (scripts) vs drawing
+// (style + layout + paint). Kept for the last few seconds only.
+const loafs = [];
+try {
+  new PerformanceObserver(list => {
+    for (const e of list.getEntries()) {
+      const script = (e.scripts ?? []).reduce((a, s) => a + s.duration, 0);
+      const draw = e.styleAndLayoutStart > 0 ? e.startTime + e.duration - e.styleAndLayoutStart : 0;
+      loafs.push({ start: e.startTime, end: e.startTime + e.duration, script, draw });
+    }
+    while (loafs.length > 60) loafs.shift();
+  }).observe({ type: 'long-animation-frame', buffered: false });
+} catch { }
+const frameCost = t0 => {
+  let js = 0, draw = 0;
+  for (const f of loafs) if (f.end >= t0) { js += f.script; draw += f.draw; }
+  return js || draw ? { js: Math.round(js), draw: Math.round(draw) } : {};
+};
+
 // --- Navigation tracking (channel switch timing + loading screen) ---
 // Any way of opening a channel counts: channel/thread links, DMs, server icons, jump links.
 diag.switches = [];
@@ -725,14 +748,15 @@ const startNav = (cid, warm) => {
     const ms = performance.now() - t0;
     if (isReady(cid)) {
       clearTimeout(showAt);
-      // let the first frame of messages paint before fading out
-      requestAnimationFrame(() => requestAnimationFrame(() => { if (id === navId) hideLoad(); }));
-      diag.switches.push({ ms: Math.round(ms), warm });
+      // let the first frame of messages paint before fading out; Discord's own selection is in place by now
+      requestAnimationFrame(() => requestAnimationFrame(() => { if (id === navId) { hideLoad(); clearSelection(); } }));
+      const cost = frameCost(t0);
+      diag.switches.push({ ms: Math.round(ms), warm, ...cost });
       if (diag.switches.length > 30) diag.switches.shift();
       return report();
     }
     if (ms < 8000) setTimeout(poll, 40);
-    else hideLoad(); // never leave it up
+    else { hideLoad(); clearSelection(); } // never leave anything up
   };
   setTimeout(poll, 0);
 };
@@ -772,8 +796,63 @@ const cancelPending = () => {
   if (!pending) return;
   cancelAnimationFrame(pending.raf);
   clearTimeout(pending.timer);
-  pending.a.classList.remove('asar-pending');
   pending = null;
+};
+
+// Move the sidebar selection the instant you click, in Discord's own style: the background and text colours of the
+// currently selected row are copied onto the clicked row and cleared from the old one. So while Discord builds the
+// channel (when nothing can redraw) the sidebar already shows one clean selection, never two. Once Discord has drawn
+// the new channel, these temporary styles are removed and Discord's own state takes over.
+let selPatch = [];
+const setImp = (el, prop, val) => {
+  selPatch.push({ el, prop, value: el.style.getPropertyValue(prop), pri: el.style.getPropertyPriority(prop) });
+  el.style.setProperty(prop, val, 'important');
+  selPatch[selPatch.length - 1].mine = el.style.getPropertyValue(prop);
+};
+const clearSelection = () => {
+  for (const p of selPatch.reverse()) {
+    // Only undo what's still ours; if Discord changed the style meanwhile, leave Discord's value
+    if (p.el.style.getPropertyValue(p.prop) !== p.mine || p.el.style.getPropertyPriority(p.prop) !== 'important') continue;
+    if (p.value) p.el.style.setProperty(p.prop, p.value, p.pri);
+    else p.el.style.removeProperty(p.prop);
+  }
+  selPatch = [];
+  document.querySelectorAll('.asar-pending').forEach(e => e.classList.remove('asar-pending'));
+};
+const opaque = c => c && c !== 'transparent' && !/^rgba\(.*,\s*0\)$/.test(c);
+const parts = a => [ a, ...a.querySelectorAll('div,span,svg') ].slice(0, 14);
+const moveSelection = newA => {
+  clearSelection();
+  let oldA = null;
+  try { oldA = document.querySelector('a[href="' + location.pathname + '"]'); } catch { }
+  if (!oldA || oldA === newA || !oldA.isConnected) { newA.classList.add('asar-pending'); return; }
+
+  // The element in the selected row that draws Discord's selection background (the link or one of its parents)
+  let carrier = null, depth = 0, el = oldA;
+  for (let d = 0; d < 4 && el; d++, el = el.parentElement) {
+    if (opaque(getComputedStyle(el).backgroundColor)) { carrier = el; depth = d; break; }
+  }
+  if (!carrier) { newA.classList.add('asar-pending'); return; }
+  let target = newA;
+  for (let d = 0; d < depth && target; d++) target = target.parentElement;
+  if (!target || target.contains(oldA)) { newA.classList.add('asar-pending'); return; }
+
+  // Read everything first, then write (one style pass)
+  const cs = getComputedStyle(carrier);
+  const bg = cs.backgroundColor, radius = cs.borderRadius;
+  const oldParts = parts(oldA), newParts = parts(newA);
+  const selColors = oldParts.map(e => getComputedStyle(e).color);
+  // The plain (unselected, not hovered) look comes from another row in the same list; the clicked row is hovered
+  const list = newA.closest('nav, ul, [role="tree"], [role="list"]') ?? document;
+  const ref = [ ...list.querySelectorAll('a[href^="/channels/"]') ].slice(0, 60).find(x => x !== oldA && x !== newA && !x.matches(':hover') && x.isConnected);
+  const refParts = ref ? parts(ref) : [];
+  const idleColors = refParts.map(e => getComputedStyle(e).color);
+
+  setImp(target, 'background-color', bg);
+  if (radius) setImp(target, 'border-radius', radius);
+  setImp(carrier, 'background-color', 'transparent');
+  newParts.forEach((e, i) => { if (oldParts[i]?.tagName === e.tagName && selColors[i]) setImp(e, 'color', selColors[i]); });
+  oldParts.forEach((e, i) => { if (refParts[i]?.tagName === e.tagName && idleColors[i]) setImp(e, 'color', idleColors[i]); });
 };
 if (cfg.instantSwitch) document.addEventListener('click', e => {
   if (PASS.has(e) || !e.isTrusted || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
@@ -793,7 +872,7 @@ if (cfg.instantSwitch) document.addEventListener('click', e => {
   pendingDM = a.getAttribute('href').startsWith('/channels/@me/') ? cid : null;
   try {
     showBar(); // also loads the .asar-pending style
-    a.classList.add('asar-pending');
+    moveSelection(a);
     if (cfg.loader && !inStore(cid)) { hideBar(); showLoad(cid, true); }
   } catch { }
 
@@ -801,7 +880,6 @@ if (cfg.instantSwitch) document.addEventListener('click', e => {
   const go = () => {
     if (pending?.a !== a) return;
     pending = null;
-    a.classList.remove('asar-pending');
     const ev = new MouseEvent('click', { bubbles: true, cancelable: true, composed: true, view: window, button: 0, clientX: x, clientY: y });
     PASS.add(ev);
     (target.isConnected ? target : a).dispatchEvent(ev);

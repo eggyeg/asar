@@ -431,6 +431,11 @@ if (info.hwAccel === false) $('hwbox').hidden = false;
     lines.push(`Channel switch: <b>${med(sw.map(x => x.ms))} ms</b> median over ${sw.length}` +
       (warm.length && cold.length ? ` · preloaded <b>${med(warm)} ms</b> vs not <b>${med(cold)} ms</b>` : ''));
   }
+  const costed = sw.filter(x => x.js != null || x.draw != null);
+  if (costed.length) {
+    const worst = costed.reduce((a, b) => (b.ms > a.ms ? b : a));
+    lines.push(`Slowest recent switch: <b>${worst.ms} ms</b> · Discord's code <b>${worst.js ?? 0} ms</b> · drawing <b>${worst.draw ?? 0} ms</b>`);
+  }
   if (pf && (pf.sent || pf.skipped)) {
     const kept = pf.kept ?? 0, hover = pf.sent - kept;
     lines.push(`Loaded ahead: <b>${kept}</b> top channel${kept === 1 ? '' : 's'} kept ready · <b>${hover}</b> on hover · ${pf.skipped} already loaded` + (pf.failed ? ` · ${pf.failed} failed` : ''));
